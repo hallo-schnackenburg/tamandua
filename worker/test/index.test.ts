@@ -50,6 +50,13 @@ describe('POST /chat', () => {
     expect(JSON.stringify(await response.json())).not.toContain('sk-test')
   })
 
+  it('passes on the reason the model gives', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const refusal = vi.fn(async () => new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'bad parameter' } }), { status: 400 }))
+    const response = await handle(post(body), env, asFetch(refusal))
+    expect(((await response.json()) as { error: string }).error).toBe('The model answered with an error (400): bad parameter')
+  })
+
   it('reports that the model is not reachable', async () => {
     const offline = async () => {
       throw new Error('offline')

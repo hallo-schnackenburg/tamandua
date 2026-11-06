@@ -38,6 +38,11 @@ describe('buildModelRequest', () => {
     expect(built.tools.map((t) => t.name)).toEqual(['create_object', 'patch', 'say'])
   })
 
+  it('sends no sampling parameters, which Haiku 5.5 rejects', () => {
+    const built = buildModelRequest(request(), 'claude-haiku-5-5') as Record<string, unknown>
+    for (const name of ['temperature', 'top_p', 'top_k']) expect(built).not.toHaveProperty(name)
+  })
+
   it('puts the files, the objects and the message into the last user turn', () => {
     const built = buildModelRequest(
       request({ files: [{ name: 'a.jpg', object: 3 }, { name: 'b.jpg' }], objects: [{ number: 3, text: 'title: X\n', issues: ['/date invalid'] }] }),

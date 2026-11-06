@@ -134,7 +134,7 @@ export function buildModelRequest(request: ChatRequest, model: string) {
   return {
     model,
     max_tokens: 1024,
-    temperature: 0,
+    // No temperature, top_p or top_k: Haiku 5.5 rejects them.
     system: SYSTEM_PROMPT,
     tools: TOOLS,
     tool_choice: { type: 'any' }, // always answer with a tool call

@@ -71,8 +71,16 @@ export async function handle(request: Request, env: Env, fetchFn: typeof fetch =
   }
 
   if (!answer.ok) {
-    console.error('Anthropic API error', answer.status, await answer.text().catch(() => ''))
-    return json({ error: `The model answered with an error (${answer.status}).` }, 502, env)
+    // The model's own explanation ("invalid_request_error: ...") helps to find a mistake and holds no secrets.
+    const detail = await answer.text().catch(() => '')
+    console.error('Anthropic API error', answer.status, detail)
+    let reason = ''
+    try {
+      reason = String(JSON.parse(detail)?.error?.message ?? '').slice(0, 300)
+    } catch {
+      // not JSON; keep only the status
+    }
+    return json({ error: `The model answered with an error (${answer.status})${reason ? `: ${reason}` : ''}` }, 502, env)
   }
   return json({ calls: toToolCalls(await answer.json()) }, 200, env)
 }
