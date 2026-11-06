@@ -1,7 +1,7 @@
 import { parse } from 'yaml'
-import { checkConsistency } from './consistency.js'
-import { validateObject } from './schema.js'
-import type { Issue } from './types.js'
+import { checkConsistency } from '../consistency.js'
+import { validateObject } from '../schema.js'
+import type { Issue } from '../types.js'
 
 /**
  * Full check of an object as it is written in a YAML file: syntax, schema, then

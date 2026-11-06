@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { validateObjectYaml } from '../src/yaml.js'
-import { file, sha } from './fixtures.js'
+import { validateObjectYaml } from '../../src/yaml/validate.js'
+import { file, sha } from '../fixtures.js'
 import { stringify } from 'yaml'
 
 describe('validateObjectYaml', () => {

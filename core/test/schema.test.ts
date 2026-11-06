@@ -74,6 +74,12 @@ describe('dates', () => {
     expect(messages(photo(), (o) => (o.date = date)).length).toBeGreaterThan(0),
   )
 
+  it('explains an invalid date without showing the pattern', () => {
+    expect(messages(photo(), (o) => (o.date = 'um 1960'))).toEqual([
+      '/date: not a valid date; use e.g. "1963", "1963-07-14", "196X", "1960/1969"',
+    ])
+  })
+
   it('explains an unquoted year (YAML reads it as a number)', () => {
     expect(messages(photo(), (o) => (o.date = 1963))).toEqual([
       '/date: date must be text; put it in quotes, e.g. date: "1963"',

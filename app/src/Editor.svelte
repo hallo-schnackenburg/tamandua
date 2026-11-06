@@ -13,7 +13,8 @@
   let { value, diagnostics, onchange }: Props = $props()
 
   let host: HTMLDivElement
-  let view: EditorView | undefined
+  // $state.raw: effects below re-run when the editor exists, but its insides are not tracked.
+  let view = $state.raw<EditorView>()
 
   // Create the editor once, when the element exists; destroy it when the component goes.
   onMount(() => {
@@ -30,6 +31,13 @@
       ],
     })
     return () => view?.destroy()
+  })
+
+  // Text changed from outside (a dropped file, later the agent): show it in the editor.
+  // When the user types, `value` already equals the document, so nothing happens.
+  $effect(() => {
+    if (!view || value === view.state.doc.toString()) return
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
   })
 
   // Runs again whenever `diagnostics` changes: hand the new markers to the editor.

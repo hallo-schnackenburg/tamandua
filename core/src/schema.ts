@@ -34,6 +34,11 @@ function toIssue(error: ErrorObject): Issue {
         return { path, message: 'date must be text; put it in quotes, e.g. date: "1963"' }
       }
       return { path, message: `must be ${params.type}` }
+    case 'pattern':
+      if (path.endsWith('/date')) {
+        return { path, message: 'not a valid date; use e.g. "1963", "1963-07-14", "196X", "1960/1969"' }
+      }
+      return { path, message: error.message ?? 'invalid' }
     default:
       return { path, message: error.message ?? 'invalid' }
   }

@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { locate, validateObjectYaml } from '@archive/core'
+  import { addFile, locate, validateObjectYaml, type FileEntry } from '@archive/core'
   import type { Diagnostic } from '@codemirror/lint'
   import Editor from './Editor.svelte'
-  import { sample } from './sample.js'
+  import Dropzone from './Dropzone.svelte'
+  import { newDraftText } from './template.js'
 
   // `$state` makes `text` reactive: whatever uses it is updated when it changes.
-  let text = $state(sample)
+  let text = $state(newDraftText())
 
   // `$derived` is recomputed whenever `text` changes. All checks come from the core.
   const issues = $derived(validateObjectYaml(text))
@@ -22,7 +23,7 @@
 
   <section class="pane">
     <h2>Dateien</h2>
-    <p class="muted">Kommt als Nächstes.</p>
+    <Dropzone onfile={(entry: FileEntry) => (text = addFile(text, entry))} />
   </section>
 
   <section class="pane editor-pane">

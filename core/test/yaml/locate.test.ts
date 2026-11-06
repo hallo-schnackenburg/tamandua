@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { locate } from '../src/locate.js'
+import { locate } from '../../src/yaml/locate.js'
 
 const text = `id: 01JC8Z3Q7M5K2V9X4T6R1B0N8D
 type: photo
