@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schema/object.schema.json",
+  "title": "Archive object",
+  "description": "Metadata of one archive object (a photo, a document, ...). One YAML file per object. Files (scans, videos, OCR text, ...) live in the object store and are described in YAML files.",
+  "type": "object",
+  "required": ["id", "type", "title", "files"],
+
+  "allOf": [
+    { "$ref": "#/$defs/common" },
+    {
+      "if": { "properties": { "type": { "const": "photo" } }, "required": ["type"] },
+      "then": { "$ref": "#/$defs/photo" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "document" } }, "required": ["type"] },
+      "then": { "$ref": "#/$defs/document" }
+    }
+  ],
+  "unevaluatedProperties": false,
+
+  "$defs": {
+
+    "common": {
+      "properties": {
+        "id": {
+          "description": "ULID. Stable and meaningless: never derived from file names or call numbers.",
+          "type": "string",
+          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+        },
+        "type": {
+          "description": "Object type. Decides which further fields and which files are allowed.",
+          "enum": ["photo", "document"]
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "date": { "$ref": "#/$defs/edtf_date" },
+        "location": {
+          "description": "Place as free text, for humans.",
+          "type": "string"
+        },
+        "geocode": { "$ref": "#/$defs/geocode" },
+        "people": {
+          "description": "Names of depicted or mentioned people, as free text.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "notes": {
+          "description": "Internal notes of the person capturing the object.",
+          "type": "string"
+        },
+        "files": { "type": "array" }
+      }
+    },
+
+    "photo": {
+      "properties": {
+        "photographer": { "type": "string" },
+        "files": {
+          "description": "Exactly one file with the role 'main'.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/file" },
+              { "properties": { "role": { "const": "main" } } }
+            ]
+          }
+        }
+      }
+    },
+
+    "document": {
+      "properties": {
+        "kind": {
+          "description": "Kind of document.",
+          "enum": ["letter", "protocol", "note", "other"]
+        },
+        "author": { "type": "string" },
+        "recipient": { "type": "string" },
+        "language": {
+          "description": "ISO 639-1 code, e.g. 'de'.",
+          "type": "string",
+          "pattern": "^[a-z]{2,3}$"
+        },
+        "files": {
+          "description": "One or more pages. 'seq' gives the order and must be unique (checked in CI, not expressible here).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/file" },
+              {
+                "properties": { "role": { "const": "page" } },
+                "required": ["seq"]
+              }
+            ]
+          }
+        }
+      },
+      "required": ["kind"]
+    },
+
+    "file": {
+      "description": "An original file in the object store, e.g. a scan.",
+      "type": "object",
+      "required": ["role", "path", "sha256", "mime", "bytes"],
+      "properties": {
+        "role": { "description": "Role of the file within the object (restricted per type).", "type": "string" },
+        "seq": { "description": "Position, for multi-part objects.", "type": "integer", "minimum": 1 },
+        "path": {
+          "description": "Path in the object store, relative to the store root. Derived from the hash: originals/<sha[0,2]>/<sha[2,2]>/<sha>.<ext> (consistency checked in CI).",
+          "type": "string",
+          "pattern": "^originals/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}\\.[a-z0-9]+$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "mime": { "type": "string", "pattern": "^[a-z]+/[a-z0-9.+-]+$" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "duration_seconds": { "type": "number", "exclusiveMinimum": 0 },
+        "captured_at": {
+          "description": "Capture time from the file's own metadata (EXIF), if present. Not the date of the depicted event.",
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "variants": {
+          "description": "Derived files: previews, other sizes, OCR text, transcripts, key frames.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/variant" }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "variant": {
+      "type": "object",
+      "required": ["kind", "path", "sha256", "mime", "bytes", "generator"],
+      "properties": {
+        "kind": {
+          "enum": ["preview", "thumbnail", "web", "ocr_text", "transcript", "keyframe"]
+        },
+        "path": {
+          "description": "Path in the object store: variants/<sha[0,2]>/<sha[2,2]>/<sha>.<ext>.",
+          "type": "string",
+          "pattern": "^variants/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}\\.[a-z0-9]+$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "mime": { "type": "string", "pattern": "^[a-z]+/[a-z0-9.+-]+$" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "at_seconds": { "description": "For key frames: position in the video.", "type": "number", "minimum": 0 },
+        "generator": {
+          "description": "What produced the variant. Use name 'human' for hand-made or hand-corrected variants.",
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "geocode": {
+      "type": "object",
+      "required": ["lat", "lon", "precision"],
+      "properties": {
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+        "precision": {
+          "description": "How exact the point is.",
+          "enum": ["exact", "street", "town", "region"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+
+    "edtf_date": {
+      "description": "EDTF date: 1963, 1963-07, 1963-07-14, 196X, 1963?, 1963~, or an interval like 1960/1969. Validated by form only.",
+      "type": "string",
+      "pattern": "^(?:\\d{4}|\\d{3}X|\\d{2}XX)(?:-(?:\\d{2}|XX)(?:-(?:\\d{2}|XX))?)?[?~%]?(?:/(?:\\d{4}|\\d{3}X|\\d{2}XX)(?:-(?:\\d{2}|XX)(?:-(?:\\d{2}|XX))?)?[?~%]?)?$"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "archive-app",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "core",
+    "app"
+  ],
+  "scripts": {
+    "test": "npm test --workspace core",
+    "typecheck": "npm run typecheck --workspaces",
+    "dev": "npm run dev --workspace app",
+    "build": "npm run build --workspace app"
+  }
+}
