@@ -2,7 +2,7 @@
 // the user's own formatting). The browser and, later, the agent change the text
 // through functions like these instead of rewriting it.
 
-import { isMap, isSeq, parseDocument } from 'yaml'
+import { Scalar, isMap, isSeq, parseDocument } from 'yaml'
 
 export type FileEntry = Record<string, unknown>
 
@@ -39,4 +39,54 @@ export function addFile(text: string, entry: FileEntry): string {
   if (isSeq(existing)) existing.add(doc.createNode(full))
   else doc.set('files', doc.createNode([full]))
   return doc.toString()
+}
+
+export type SetFieldResult =
+  | { ok: true; text: string }
+  /** Not changed, because the field no longer has the value the caller expected. */
+  | { ok: false; current: unknown }
+
+/** These cannot be changed with `setField`: they are tied to the files. */
+const LOCKED = new Set(['id', 'type', 'files'])
+
+const isEmpty = (value: unknown): boolean =>
+  value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
+
+/**
+ * Sets one top-level field, but only if it still has the value the caller saw (`old`).
+ * That is how the agent changes fields without overwriting what the user has typed in
+ * the meantime: it says "title was empty, make it X"; if the user has written a title
+ * by then, the change is skipped and the caller reports it. An empty value removes the
+ * field. A new field is placed before `files`; a date is always written in quotes.
+ */
+export function setField(text: string, field: string, value: unknown, old: unknown): SetFieldResult {
+  if (LOCKED.has(field)) throw new Error(`The field "${field}" cannot be changed this way.`)
+  const doc = parseDocument(text)
+  if (doc.errors.length > 0 || !isMap(doc.contents)) {
+    throw new Error('The YAML has a syntax error; fix it first.')
+  }
+
+  const current = (doc.toJS() as Record<string, unknown>)[field]
+  const unchanged = (isEmpty(current) && isEmpty(old)) || JSON.stringify(current) === JSON.stringify(old)
+  if (!unchanged) return { ok: false, current }
+
+  if (isEmpty(value)) {
+    doc.delete(field)
+    return { ok: true, text: doc.toString() }
+  }
+
+  let node: unknown = value
+  if (field === 'date' && typeof value === 'string') {
+    const quoted = new Scalar(value)
+    quoted.type = 'QUOTE_DOUBLE'
+    node = quoted
+  }
+  if (doc.has(field)) {
+    doc.set(field, node)
+  } else {
+    const items = doc.contents.items
+    const at = items.findIndex((pair) => String((pair.key as { value?: unknown }).value) === 'files')
+    items.splice(at === -1 ? items.length : at, 0, doc.createPair(field, node) as (typeof items)[number])
+  }
+  return { ok: true, text: doc.toString() }
 }

@@ -1,0 +1,12 @@
+name = "archive-worker"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[vars]
+# Which page may call the Worker from a browser. Local development only.
+ALLOWED_ORIGIN = "http://localhost:5173"
+MODEL = "claude-haiku-5-5"
+
+# The Anthropic key is a secret and is not written here:
+#   local:       worker/.dev.vars          (ANTHROPIC_API_KEY=...; not in git)
+#   deployed:    npx wrangler secret put ANTHROPIC_API_KEY

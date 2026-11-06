@@ -9,7 +9,6 @@
 
   const objectsById = $derived(new Map(ws.objects.map((o) => [o.id, o])))
   const selected = $derived(new Set(ws.selection))
-  const freeSelected = $derived(ws.files.filter((f) => selected.has(f.sha256) && !f.objectId).length)
 
   // One address per preview image; created when first shown.
   const urls = new WeakMap<Blob, string>()
@@ -20,10 +19,6 @@
   }
 
   const extension = (name: string) => (name.split('.').pop() ?? '').toLowerCase()
-
-  // For the temporary "create object" controls, until the chat does this.
-  let type = $state<'photo' | 'document'>('photo')
-  let subtype = $state('letter')
 
   let over = $state(false)
 
@@ -67,29 +62,7 @@
         + Dateien
         <input type="file" multiple onchange={onpick} />
       </label>
-      <span class="spacer"></span>
-      <span class="count">{freeSelected} frei ausgewählt</span>
-      <select bind:value={type} aria-label="Typ">
-        <option value="photo">Foto</option>
-        <option value="document">Dokument</option>
-      </select>
-      {#if type === 'document'}
-        <select bind:value={subtype} aria-label="Untertyp">
-          <option value="letter">Brief</option>
-          <option value="protocol">Protokoll</option>
-          <option value="note">Notiz</option>
-          <option value="other">Sonstiges</option>
-        </select>
-      {/if}
-      <button disabled={freeSelected === 0} onclick={() => ws.createObjects(type, subtype)}>Object anlegen</button>
     </div>
-
-    {#each ws.notices as notice, index}
-      <p class="notice">
-        {notice}
-        <button class="close" onclick={() => ws.dismissNotice(index)} aria-label="Schließen">×</button>
-      </p>
-    {/each}
 
     <div class="grid">
       {#each ws.files as file (file.sha256)}
@@ -98,6 +71,7 @@
         <button
           class="tile"
           class:selected={selected.has(file.sha256)}
+          class:active={ws.active === file.sha256}
           class:assigned={!!object}
           style:--color={color}
           title={file.name}
@@ -143,17 +117,15 @@
   .hint small { color: #999; }
   input[type='file'] { display: none; }
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 0.9rem; }
-  .spacer { flex: 1; }
   .more { color: #36c; cursor: pointer; }
-  .count { color: #777; }
-  .notice { margin: 0 0 6px; padding: 4px 8px; background: #fff4e0; border-radius: 4px; font-size: 0.85rem; display: flex; justify-content: space-between; gap: 8px; }
   .close { border: 0; background: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 2px; }
   .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; border: 2px dashed #36c; border-radius: 6px; background: #eef3ff; color: #36c; font-weight: 600; pointer-events: none; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; overflow: auto; align-content: start; padding: 4px; }
   .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 4px; text-align: left; font: inherit; font-size: 0.78rem; background: #fafafa; border: 3px solid #ddd; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
   .tile.assigned { border-color: var(--color); }
-  .tile.selected { background: #e8f0fe; outline: 2px solid #1c1c1c; outline-offset: 1px; }
+  .tile.selected { background: #dbe7fd; }
+  .tile.active { outline: 2px solid #1c1c1c; outline-offset: 1px; }
   .tile.pending { cursor: default; }
   .tile.failed { border-color: #c92a2a; }
   .tile img, .noimg { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; background: #e9e9e9; }

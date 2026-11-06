@@ -2,22 +2,24 @@
 // nothing: the files that were dropped (hash, name, preview, upload state) and the
 // objects (YAML text). The original files themselves are not kept.
 
-import type { FileRecord, ObjectRecord } from './workspace.svelte.js'
+import type { ChatMessage, FileRecord, ObjectRecord } from './workspace.svelte.js'
 
 const DB_NAME = 'stadtarchiv'
 const FILES = 'files'
 const OBJECTS = 'objects'
+const CHAT = 'chat' // one record, {id: 'log', messages: [...]}
 
 let opened: Promise<IDBDatabase> | undefined
 
 function database(): Promise<IDBDatabase> {
   opened ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2)
+    const request = indexedDB.open(DB_NAME, 3)
     request.onupgradeneeded = () => {
       const db = request.result
       if (db.objectStoreNames.contains('drafts')) db.deleteObjectStore('drafts') // version 1, dropped
       if (!db.objectStoreNames.contains(FILES)) db.createObjectStore(FILES, { keyPath: 'sha256' })
       if (!db.objectStoreNames.contains(OBJECTS)) db.createObjectStore(OBJECTS, { keyPath: 'id' })
+      if (!db.objectStoreNames.contains(CHAT)) db.createObjectStore(CHAT, { keyPath: 'id' })
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
@@ -34,11 +36,12 @@ function done(transaction: IDBTransaction): Promise<void> {
 }
 
 /** Writes all given records in one transaction. Pass plain copies (`$state.snapshot`). */
-export async function save(files: FileRecord[], objects: ObjectRecord[]): Promise<void> {
+export async function save(files: FileRecord[], objects: ObjectRecord[], chat?: ChatMessage[]): Promise<void> {
   const db = await database()
-  const transaction = db.transaction([FILES, OBJECTS], 'readwrite')
+  const transaction = db.transaction([FILES, OBJECTS, CHAT], 'readwrite')
   for (const file of files) transaction.objectStore(FILES).put(file)
   for (const object of objects) transaction.objectStore(OBJECTS).put(object)
+  if (chat) transaction.objectStore(CHAT).put({ id: 'log', messages: chat })
   await done(transaction)
 }
 
@@ -55,3 +58,8 @@ function readAll<T>(store: string): Promise<T[]> {
 
 export const loadFiles = () => readAll<FileRecord>(FILES)
 export const loadObjects = () => readAll<ObjectRecord>(OBJECTS)
+
+export async function loadChat(): Promise<ChatMessage[]> {
+  const [log] = await readAll<{ id: string; messages: ChatMessage[] }>(CHAT)
+  return log?.messages ?? []
+}

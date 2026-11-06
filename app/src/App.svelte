@@ -2,13 +2,19 @@
   import { onMount } from 'svelte'
   import { locate, validateObjectYaml } from '@archive/core'
   import type { Diagnostic } from '@codemirror/lint'
+  import Chat from './Chat.svelte'
   import Editor from './Editor.svelte'
   import Files from './Files.svelte'
+  import { FakeAgent } from './agent.js'
+  import { WorkerAgent } from './worker-agent.js'
   import { FakeStore } from './uploader.js'
   import { Workspace } from './workspace.svelte.js'
 
   // All state lives in the workspace; this component only arranges the panes.
-  const ws = new Workspace(new FakeStore())
+  const ws = new Workspace(
+    new FakeStore(),
+    import.meta.env.VITE_WORKER_URL ? new WorkerAgent(import.meta.env.VITE_WORKER_URL) : new FakeAgent(),
+  )
 
   onMount(() => {
     void ws.load()
@@ -63,7 +69,7 @@
 
     <section class="pane">
       <h2>Chat</h2>
-      <p class="muted">Kommt als Nächstes.</p>
+      <Chat workspace={ws} />
     </section>
   </div>
 </main>
@@ -77,7 +83,6 @@
   .pane { display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: 6px; padding: 12px; }
   h2 { margin: 0 0 8px; font-size: 1rem; }
   h2 small { font-weight: 400; color: #777; margin-left: 6px; }
-  .muted { color: #777; }
   .editor-box { flex: 1; min-height: 0; border: 1px solid #ddd; }
   .issues { margin: 8px 0 0; padding: 0; list-style: none; font-size: 0.9rem; max-height: 8rem; overflow: auto; }
   .issues li { padding: 2px 0; color: #a11; }

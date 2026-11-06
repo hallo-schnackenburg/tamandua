@@ -3,6 +3,5 @@ export function newObjectText(id: string, type: 'photo' | 'document', subtype?: 
   return `id: ${id}
 type: ${type}
 ${subtype ? `subtype: ${subtype}\n` : ''}title:
-date: ""
 `
 }

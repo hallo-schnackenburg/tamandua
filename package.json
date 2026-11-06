@@ -4,12 +4,14 @@
   "type": "module",
   "workspaces": [
     "core",
-    "app"
+    "app",
+    "worker"
   ],
   "scripts": {
-    "test": "npm test --workspace core",
-    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run dev --workspace app",
+    "dev:worker": "npm run dev --workspace worker",
     "build": "npm run build --workspace app"
   }
 }
