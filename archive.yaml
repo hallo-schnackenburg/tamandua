@@ -1,0 +1,18 @@
+object_types:
+  image:
+    - photo
+    - drawing
+    - print
+    - plan
+  document:
+    - letter
+    - protocol
+    - note
+
+entity_types:
+  - person
+  - place
+  - building
+  - business
+  - event
+  - thing
