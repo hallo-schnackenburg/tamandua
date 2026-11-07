@@ -28,7 +28,7 @@ export const FIELD_NAMES: Record<string, string> = {
 
 /** "Brief" for a letter, "Bild" for an image without subtype. */
 export const objectLabel = (type?: string, subtype?: string): string =>
-  (subtype && SUBTYPE_NAMES[subtype]) || (type && TYPE_NAMES[type]) || subtype || type || 'Object'
+  (subtype && SUBTYPE_NAMES[subtype]) || (type && TYPE_NAMES[type]) || subtype || type || 'Objekt'
 
 // One color per object.
 const PALETTE = ['#1c7ed6', '#d9480f', '#2f9e44', '#9c36b5', '#c2255c', '#0c8599', '#e67700', '#5f3dc4']

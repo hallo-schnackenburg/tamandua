@@ -46,8 +46,12 @@ export interface Pending {
 }
 
 export interface ChatMessage {
-  /** `status` is what the app reports (uploads, objects created); the others are the conversation. */
-  role: 'user' | 'assistant' | 'status'
+  /**
+   * `user` and `assistant` are the conversation. `status` is a notice to the user (something was
+   * refused, a field was not changed). `log` is the record of what the app did (uploads, objects
+   * created, fields set); it is kept but not shown in the chat.
+   */
+  role: 'user' | 'assistant' | 'status' | 'log'
   text: string
 }
 
@@ -59,6 +63,12 @@ interface Batch {
   failed: string[]
   duplicates: string[]
   message: ChatMessage
+  /** The files of this drop that exist now; they get selected when the drop is done. */
+  shas: string[]
+  /** True once the user has been told how the drop went. */
+  told?: boolean
+  /** Files dropped onto an object also go into it. */
+  objectId?: string
 }
 
 const show = (value: unknown): string => {
@@ -69,9 +79,30 @@ const show = (value: unknown): string => {
   }
   return String(value ?? '')
 }
-/** "Datei „a.jpg“" or "3 Dateien". */
+/** What happened to one object while tool calls were carried out. */
+interface Change {
+  created?: string
+  set: string[]
+  kept: string[]
+}
+/** The result of carrying out tool calls: `log` is what was done, `changes` is what the user is told. */
+interface Out {
+  log: string[]
+  changes: Map<ObjectRecord, Change>
+  notes: string[]
+}
+
+/** "Datei „a.jpg“" or "3 Dateien" (for the log). */
 const count = (list: string[]): string => (list.length === 1 ? `Datei „${list[0]}“` : `${list.length} Dateien`)
+/** "die Datei „a.jpg“" or "3 Dateien" (for the conversation). */
+const them = (list: string[]): string => (list.length === 1 ? `die Datei „${list[0]}“` : `${list.length} Dateien`)
 const names = (list: string[]): string => `(${list.slice(0, 3).join(', ')}${list.length > 3 ? ', …' : ''})`
+
+/** How the app speaks of an object: by its title if it has one, else by its number. */
+function refer(object: ObjectRecord): string {
+  const title = readField(object.text, 'title')
+  return typeof title === 'string' && title ? `Objekt „${title}“` : `Objekt ${object.number}`
+}
 
 /** What is still missing in an object, in words for the user. */
 function missing(text: string): string[] {
@@ -151,11 +182,12 @@ export class Workspace {
 
   // --- dropping files: hash one after the other, upload in the background ---
 
-  addDropped(list: Iterable<File>) {
+  /** Files from outside. Dropped onto an object (`objectId`), they are also put into it. */
+  addDropped(list: Iterable<File>, objectId?: string) {
     const files = [...list].sort(byName) // scans are usually numbered: natural order by name
     if (files.length === 0) return
-    const message = this.#say('status', '')
-    const batch: Batch = { total: files.length, uploaded: 0, conflicts: [], failed: [], duplicates: [], message }
+    const message = this.#say('log', '')
+    const batch: Batch = { total: files.length, uploaded: 0, conflicts: [], failed: [], duplicates: [], message, objectId, shas: [] }
     this.#report(batch)
     this.#queue.push(...files.map((file) => ({ file, batch })))
     void this.#run()
@@ -172,6 +204,32 @@ export class Workspace {
     if (done < batch.total) parts.push(`${batch.total - done} in Arbeit`)
     batch.message.text = `${batch.total} ${batch.total === 1 ? 'Datei' : 'Dateien'} abgelegt: ${parts.join(', ')}`
     this.#markChat()
+    if (done === batch.total && !batch.told) this.#conclude(batch)
+  }
+
+  /** When the last file of a drop is done, tell the user how it went and ask what comes next. */
+  #conclude(batch: Batch) {
+    batch.told = true
+    const sentences: string[] = []
+    if (batch.uploaded && !batch.objectId) {
+      sentences.push(`Du hast ${batch.uploaded === 1 ? 'eine Datei' : `${batch.uploaded} Dateien`} hochgeladen.`)
+    }
+    if (batch.duplicates.length) {
+      const one = batch.duplicates.length === 1
+      sentences.push(one ? `Die Datei „${batch.duplicates[0]}“ war schon vorhanden.` : `${batch.duplicates.length} Dateien waren schon vorhanden.`)
+    }
+    if (batch.conflicts.length) sentences.push(`Bei ${them(batch.conflicts)} gab es einen Konflikt ${names(batch.conflicts)}.`)
+    if (batch.failed.length) sentences.push(`${them(batch.failed)} ${batch.failed.length === 1 ? 'konnte' : 'konnten'} nicht verarbeitet werden ${names(batch.failed)}.`)
+    if (batch.uploaded && !batch.objectId) sentences.push(`Möchtest du sie jetzt beschreiben?`)
+    if (sentences.length) this.#say('assistant', sentences.join(' '))
+    if (!batch.objectId && batch.shas.length > 0) {
+      // Dropping is a deliberate act: the dropped files become the selection, whatever was selected before.
+      this.picked = false
+      this.selection = [...batch.shas]
+      this.#anchor = batch.shas[0]
+      this.active = batch.shas[0]
+      this.focusTick++
+    }
   }
 
   async #run() {
@@ -188,14 +246,20 @@ export class Workspace {
       const { entry, preview } = await prepareFile(file, (fraction) => (item.progress = fraction))
       const sha256 = entry.sha256 as string
       const existing = this.files.find((f) => f.sha256 === sha256)
+      let record: FileRecord
       if (existing && existing.status !== 'error') {
         batch.duplicates.push(file.name)
+        record = existing
       } else if (existing) {
         void this.#upload(existing, file, batch) // try again after an error
+        record = existing
       } else {
         this.files.push({ sha256, name: file.name, bytes: file.size, entry, preview, status: 'uploading', addedAt: Date.now() })
-        void this.#upload(this.files[this.files.length - 1], file, batch)
+        record = this.files[this.files.length - 1]
+        void this.#upload(record, file, batch)
       }
+      batch.shas.push(record.sha256)
+      if (batch.objectId) this.#putInto(record, batch.objectId)
       this.pending = this.pending.filter((p) => p !== item)
     } catch (error) {
       item.state = 'error'
@@ -268,19 +332,31 @@ export class Workspace {
 
   // --- rearranging: files go into an object, or come out of it ---
 
+  /** A file dropped from outside onto an object: it goes in, unless it already belongs to an object. */
+  #putInto(record: FileRecord, objectId: string) {
+    if (record.objectId === objectId) return
+    if (record.objectId) {
+      const owner = this.objects.find((o) => o.id === record.objectId)
+      if (owner) this.#say('assistant', `Die Datei „${record.name}“ gehört schon zu ${refer(owner)}. Zieh sie dort heraus, wenn du sie verschieben willst.`)
+      return
+    }
+    this.attach([record.sha256], objectId)
+  }
+
   /** Puts files into an object. A file that belongs to another object is moved. */
   attach(shas: string[], objectId: string) {
     const target = this.objects.find((o) => o.id === objectId)
     const files = this.files.filter((f) => shas.includes(f.sha256) && f.objectId !== objectId).sort(byName)
     if (!target || files.length === 0) return
     if (readField(target.text, 'type') === 'image' && this.files.some((f) => f.objectId === objectId)) {
-      this.#say('status', `Object ${target.number} ist ein Bild und hat schon eine Datei.`)
+      this.#say('log', `Objekt ${target.number} ist ein Bild und hat schon eine Datei.`)
       return
     }
 
-    const lines: string[] = []
+    const log: string[] = []
+    const notes: string[] = []
     const added: string[] = []
-    const moved = new Map<number, string[]>()
+    const moved = new Map<ObjectRecord, string[]>()
     const emptied = new Set<ObjectRecord>()
     for (const file of files) {
       const from = this.objects.find((o) => o.id === file.objectId)
@@ -294,17 +370,25 @@ export class Workspace {
         this.#markObject(target.id)
         file.objectId = objectId
         this.#mark(file.sha256)
-        if (from) moved.set(from.number, [...(moved.get(from.number) ?? []), file.name])
+        if (from) moved.set(from, [...(moved.get(from) ?? []), file.name])
         else added.push(file.name)
       } catch (error) {
-        lines.push(`Object ${target.number}: ${(error as Error).message}`)
+        notes.push(`Objekt ${target.number}: ${(error as Error).message}`)
       }
     }
 
-    if (added.length) lines.unshift(`${count(added)} zu Object ${target.number} hinzugefügt.`)
-    for (const [number, list] of moved) lines.push(`${count(list)} von Object ${number} nach Object ${target.number} verschoben.`)
-    this.#discard(emptied, lines)
-    this.#say('status', lines.join('\n'))
+    const told: string[] = []
+    if (added.length) {
+      log.unshift(`${count(added)} zu Objekt ${target.number} hinzugefügt.`)
+      told.push(`Du hast ${them(added)} zu ${refer(target)} hinzugefügt.`)
+    }
+    for (const [from, list] of moved) {
+      log.push(`${count(list)} von Objekt ${from.number} nach Objekt ${target.number} verschoben.`)
+      told.push(`Du hast ${them(list)} von ${refer(from)} nach ${refer(target)} verschoben.`)
+    }
+    this.#discard(emptied, log, told)
+    if (log.length) this.#say('log', log.join('\n'))
+    if (told.length || notes.length) this.#say('assistant', [...told, ...notes].join(' '))
     this.activate(objectId)
   }
 
@@ -312,24 +396,30 @@ export class Workspace {
   detach(shas: string[]) {
     const files = this.files.filter((f) => shas.includes(f.sha256) && f.objectId)
     if (files.length === 0) return
-    const lines: string[] = []
+    const log: string[] = []
+    const notes: string[] = []
     const emptied = new Set<ObjectRecord>()
     const freed: FileRecord[] = []
-    const from = new Map<number, string[]>()
+    const from = new Map<ObjectRecord, string[]>()
     for (const file of files) {
       const object = this.objects.find((o) => o.id === file.objectId)
       if (!object) continue
       try {
         this.#leave(file, object, removeFile(object.text, file.sha256), emptied)
         freed.push(file)
-        from.set(object.number, [...(from.get(object.number) ?? []), file.name])
+        from.set(object, [...(from.get(object) ?? []), file.name])
       } catch (error) {
-        lines.push(`Object ${object.number}: ${(error as Error).message}`)
+        notes.push(`Objekt ${object.number}: ${(error as Error).message}`)
       }
     }
-    for (const [number, list] of from) lines.unshift(`${count(list)} aus Object ${number} herausgenommen.`)
-    this.#discard(emptied, lines)
-    if (lines.length) this.#say('status', lines.join('\n'))
+    const told: string[] = []
+    for (const [object, list] of from) {
+      log.unshift(`${count(list)} aus Objekt ${object.number} herausgenommen.`)
+      told.push(`Du hast ${them(list)} aus dem ${refer(object)} herausgenommen.`)
+    }
+    this.#discard(emptied, log, told)
+    if (log.length) this.#say('log', log.join('\n'))
+    if (told.length || notes.length) this.#say('assistant', [...told, ...notes].join(' '))
     if (freed.length) {
       this.picked = false
       this.selection = freed.map((f) => f.sha256)
@@ -348,12 +438,13 @@ export class Workspace {
     if (!this.files.some((f) => f.objectId === from.id)) emptied.add(from)
   }
 
-  #discard(emptied: Set<ObjectRecord>, lines: string[]) {
+  #discard(emptied: Set<ObjectRecord>, lines: string[], told: string[]) {
     for (const object of emptied) {
+      told.push(`${refer(object)} hat keine Dateien mehr und wurde gelöscht.`)
       this.objects = this.objects.filter((o) => o.id !== object.id)
       this.#dirtyObjects.delete(object.id)
       this.#removedObjects.add(object.id)
-      lines.push(`Object ${object.number} hat keine Dateien mehr und wurde gelöscht.`)
+      lines.push(`Objekt ${object.number} hat keine Dateien mehr und wurde gelöscht.`)
     }
     if (emptied.size > 0) this.#schedule()
   }
@@ -369,8 +460,9 @@ export class Workspace {
   async send(text: string) {
     text = text.trim()
     if (!text || this.busy) return
-    // The conversation so far, before this message (status messages count as the app's side).
+    // The conversation so far, before this message (notices count as the app's side; the log is left out).
     const history = this.chat
+      .filter((m) => m.role !== 'log')
       .slice(-12)
       .filter((m) => m.text)
       .map((m) => ({ role: m.role === 'user' ? ('user' as const) : ('assistant' as const), text: m.text }))
@@ -401,50 +493,78 @@ export class Workspace {
   }
 
   #execute(calls: ToolCall[], target: FileRecord[]) {
-    let lines: string[] = []
-    const flush = () => {
-      if (lines.length > 0) this.#say('status', lines.join('\n'))
-      lines = []
-    }
+    // What happened goes to the log, what the user must know goes to the chat.
+    // One answer per message: what the app did first, then what the model says.
+    const out: Out = { log: [], changes: new Map(), notes: [] }
+    const said: string[] = []
     const touched: ObjectRecord[] = []
 
     for (const call of calls) {
       try {
         if (call.tool === 'say') {
-          flush()
-          this.#say('assistant', call.text)
+          said.push(call.text)
         } else if (call.tool === 'create_object') {
-          touched.push(...this.#create(call, target, lines))
+          touched.push(...this.#create(call, target, out))
         } else {
-          const object = this.#patch(call, lines)
+          const object = this.#patch(call, out)
           if (object) touched.push(object)
         }
       } catch (error) {
-        lines.push((error as Error).message)
+        out.notes.push((error as Error).message)
       }
     }
-    flush()
+    if (out.log.length > 0) this.#say('log', out.log.join('\n'))
+    const told = [...this.#describe(out.changes), ...out.notes]
+    const answer = [told.join(' '), ...said].filter(Boolean).join('\n\n')
+    if (answer) this.#say('assistant', answer)
     if (touched.length > 0) this.#settle([...new Set(touched)])
   }
 
-  #create(call: Extract<ToolCall, { tool: 'create_object' }>, target: FileRecord[], lines: string[]): ObjectRecord[] {
+  #change(out: Out, object: ObjectRecord): Change {
+    let change = out.changes.get(object)
+    if (!change) out.changes.set(object, (change = { set: [], kept: [] }))
+    return change
+  }
+
+  /** The sentences that tell the user what was done to which object, and what is still open. */
+  #describe(changes: Map<ObjectRecord, Change>): string[] {
+    const lines: string[] = []
+    for (const [object, change] of changes) {
+      const parts: string[] = []
+      const set = [...new Set(change.set)]
+      if (change.created) parts.push(`Ich habe ${refer(object)} angelegt (${change.created})${set.length ? ` und ausgefüllt: ${set.join(', ')}` : ''}.`)
+      else if (set.length) parts.push(`${refer(object)}: ${set.join(', ')} gesetzt.`)
+      if (change.kept.length) parts.push(`Nicht überschrieben, weil du es selbst geändert hast: ${change.kept.join('; ')}.`)
+      const open = change.created || set.length ? missing(object.text) : []
+      if (open.length) parts.push(`Es fehlt noch: ${open.join(', ')}.`)
+      if (parts.length) lines.push(parts.join(' '))
+    }
+    return lines
+  }
+
+  #create(call: Extract<ToolCall, { tool: 'create_object' }>, target: FileRecord[], out: Out): ObjectRecord[] {
     const free = target.filter((f) => !f.objectId)
     if (free.length === 0) {
-      lines.push(target.length === 0 ? 'Wähle zuerst eine oder mehrere Dateien aus.' : 'Die Dateien gehören schon zu einem Object.')
+      out.notes.push(target.length === 0 ? 'Wähle zuerst eine oder mehrere Dateien aus.' : 'Die Dateien gehören schon zu einem Objekt.')
       return []
     }
     const together = call.type === 'document' && call.together !== false
     const groups = together ? [[...free].sort(byName)] : free.map((f) => [f])
     const created: ObjectRecord[] = []
+    const appliedBy = new Map<string, string[]>()
 
     for (const group of groups) {
       const id = ulid()
       const number = Math.max(0, ...this.objects.map((o) => o.number)) + 1
       let text = newObjectText(id, call.type, call.subtype)
+      const applied: string[] = []
       for (const file of group) text = addFile(text, $state.snapshot(file.entry))
       for (const [field, value] of Object.entries(call.fields ?? {})) {
         const result = setField(text, field, value, undefined)
-        if (result.ok) text = result.text
+        if (result.ok) {
+          text = result.text
+          applied.push(FIELD_NAMES[field] ?? field)
+        }
       }
 
       this.objects.push({ id, number, text, updatedAt: Date.now() })
@@ -454,6 +574,7 @@ export class Workspace {
         this.#mark(file.sha256)
       }
       created.push(this.objects[this.objects.length - 1])
+      appliedBy.set(id, applied)
     }
 
     const label = objectLabel(call.type, call.subtype)
@@ -461,15 +582,18 @@ export class Workspace {
       const pages = this.files.filter((f) => f.objectId === object.id).length
       const what = call.type === 'document' && pages > 1 ? `${label}, ${pages} Seiten` : label
       const open = missing(object.text)
-      lines.push(`Object ${object.number} angelegt: ${what}.${open.length ? ` Es fehlt noch: ${open.join(', ')}.` : ''}`)
+      out.log.push(`Objekt ${object.number} angelegt: ${what}.${open.length ? ` Es fehlt noch: ${open.join(', ')}.` : ''}`)
+      const change = this.#change(out, object)
+      change.created = what
+      change.set.push(...(appliedBy.get(object.id) ?? []))
     }
     return created
   }
 
-  #patch(call: Extract<ToolCall, { tool: 'patch' }>, lines: string[]): ObjectRecord | undefined {
+  #patch(call: Extract<ToolCall, { tool: 'patch' }>, out: Out): ObjectRecord | undefined {
     const object = this.objects.find((o) => o.number === call.object)
     if (!object) {
-      lines.push(`Object ${call.object} gibt es nicht.`)
+      out.notes.push(`Objekt ${call.object} gibt es nicht.`)
       return undefined
     }
     const name = FIELD_NAMES[call.field] ?? call.field
@@ -478,9 +602,11 @@ export class Workspace {
       object.text = result.text
       object.updatedAt = Date.now()
       this.#markObject(object.id)
-      lines.push(`Object ${object.number}: ${name} gesetzt auf „${show(call.value)}“.`)
+      out.log.push(`Objekt ${object.number}: ${name} gesetzt auf „${show(call.value)}“.`)
+      this.#change(out, object).set.push(name)
     } else {
-      lines.push(`Object ${object.number}: ${name} nicht geändert, du hast es selbst geändert (jetzt: „${show(result.current)}“).`)
+      out.log.push(`Objekt ${object.number}: ${name} nicht geändert, du hast es selbst geändert (jetzt: „${show(result.current)}“).`)
+      this.#change(out, object).kept.push(`${name} (jetzt: „${show(result.current)}“)`)
     }
     return object
   }

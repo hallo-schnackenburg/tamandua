@@ -18,6 +18,12 @@
   const extension = (name: string) => (name.split('.').pop() ?? '').toLowerCase()
 
   let over = $state(false) // files from outside are over the pane
+  let zone: HTMLElement | undefined
+
+  // The whole pane is tinted, not only the area of the tiles; the tiles stay visible below the tint (the style is below, `:global`).
+  $effect(() => {
+    zone?.closest('.pane')?.classList.toggle('drop', over)
+  })
 
   // --- moving a tile to an object, or out of it ---
   // Done with pointer events and not with the browser's drag and drop, because the picture
@@ -130,6 +136,7 @@
      dropping it back here would add that image as a new file. -->
 <div
   class="zone"
+  bind:this={zone}
   role="region"
   aria-label="Dateien"
   ondragover={(event) => {
@@ -231,7 +238,8 @@
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 0.9rem; }
   .more { color: #36c; cursor: pointer; }
   .close { border: 0; background: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 2px; }
-  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; border: 2px dashed #36c; border-radius: 6px; background: #eef3ff; color: #36c; font-weight: 600; pointer-events: none; }
+  :global(main .pane.drop::after) { content: ''; position: absolute; inset: 0; border-radius: 6px; background: rgba(157, 188, 247, 0.5); pointer-events: none; }
+  .overlay { position: absolute; z-index: 2; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 0.5rem 1rem; border-radius: 999px; background: rgba(255, 255, 255, 0.92); color: #36c; font-weight: 600; pointer-events: none; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; overflow: auto; align-content: start; padding: 4px; }
   .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 4px; text-align: left; font: inherit; font-size: 0.78rem; background: #fafafa; border: 3px solid #ddd; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }

@@ -22,7 +22,7 @@
   })
 
   // What the next message is about: the selected files.
-  const subject = $derived(ws.target.length === 0 ? '' : ws.target.length === 1 ? ws.target[0].name : `${ws.target.length} Dateien`)
+  const subject = $derived(ws.target.length === 0 ? '' : ws.target.length === 1 ? `Datei: ${ws.target[0].name}` : `${ws.target.length} Dateien`)
 
   function submit() {
     const message = text
@@ -40,7 +40,7 @@
 
 <div class="chat">
   <div class="log" bind:this={log}>
-    {#each ws.chat as message}
+    {#each ws.chat.filter((m) => m.role !== 'log') as message}
       <p class={message.role}>{message.text}</p>
     {:else}
       <p class="empty">Datei(en) hierher ziehen, dann beschreiben, z. B. „Brief, Titel: Brief an die Schwester, Autor: Volker H., 3.1.65“.</p>

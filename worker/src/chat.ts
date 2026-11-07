@@ -65,7 +65,7 @@ Context you get with each message: the files the message is about, and for files
 Tools:
 - create_object: for files that belong to no object yet. type is one of: ${TYPE_LIST}. An image is always one object per file. A document takes all files as pages of ONE object (together true); set together false only if the user clearly means separate documents ("drei Briefe", "jeweils ein Brief"). Set subtype only when it is clear; otherwise leave it out. Put everything the user said into fields.
 - patch: change one field of an existing object (by its number). Pass the value you saw as "old" (leave it out if the field was not there), so that nothing the user typed in the meantime is overwritten.
-- say: answer or ask a short question. Use it when something is unclear, when the user asks something, or in addition to other calls if you must point something out.
+- say: answer or ask a short question. Use it when something is unclear, when the user asks something, or in addition to other calls if you must point something out. The app itself confirms every object created and every field set, so do not repeat that; say something only for assumptions, hints or questions.
 
 Fields (YAML keys, in English): title, description, date, location, origin, subjects, notes; documents also recipient and language (e.g. "de").
 - date is EDTF text: "1965", "1965-01", "1965-01-03", "196X" (decade), "1960/1969" (range), a trailing "?" for uncertain, "~" for approximate. Always as text.
@@ -75,7 +75,7 @@ Fields (YAML keys, in English): title, description, date, location, origin, subj
 - A two-digit year such as "65" means 1965 in this archive; say so briefly with a say call when you assume it.
 - Write names and places as the user gave them. Do not invent facts (no guessed dates, names or titles). Leave out what the user did not say.
 - Several objects at once: if the user's message applies to all of them, issue one patch per object.
-- Always answer in German, short and friendly, addressing the user with "du".`
+- Always answer in German, short and friendly, addressing the user with "du". Say "Objekt" (never "Object") and give its number, e.g. "Objekt 3".`
 
 const VALUE = {
   anyOf: [
@@ -136,11 +136,11 @@ function addTurn(turns: Turn[], role: Turn['role'], content: string) {
 }
 
 function describeContext(request: ChatRequest): string {
-  const files = request.files.map((f) => `- ${f.name}: ${f.object ? `belongs to object ${f.object}` : 'no object yet'}`).join('\n')
+  const files = request.files.map((f) => `- ${f.name}: ${f.object ? `belongs to Objekt ${f.object}` : 'no object yet'}`).join('\n')
   const objects = request.objects
     .map((o) => {
       const notes = [o.issues.length > 0 && `open: ${o.issues.join('; ')}`].filter(Boolean)
-      return `Object ${o.number}${notes.length ? ` (${notes.join('; ')})` : ''}:\n\`\`\`yaml\n${o.text.trim()}\n\`\`\``
+      return `Objekt ${o.number}${notes.length ? ` (${notes.join('; ')})` : ''}:\n\`\`\`yaml\n${o.text.trim()}\n\`\`\``
     })
     .join('\n\n')
   return [`Files this message is about:\n${files || '(none)'}`, objects && `Their objects:\n${objects}`, `Message from the user:\n${request.message}`]

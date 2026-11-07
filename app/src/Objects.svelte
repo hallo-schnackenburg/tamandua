@@ -48,16 +48,30 @@
       class:open
       class:over={ws.dragTarget === object.id}
       data-object-id={object.id}
+      ondragover={(event) => {
+        if (!event.dataTransfer?.types.includes('Files')) return // tiles are moved with the pointer, see Files.svelte
+        event.preventDefault()
+        ws.dragTarget = object.id
+      }}
+      ondragleave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null) && ws.dragTarget === object.id) ws.dragTarget = undefined
+      }}
+      ondrop={(event) => {
+        if (!event.dataTransfer?.types.includes('Files')) return
+        event.preventDefault()
+        ws.dragTarget = undefined
+        ws.addDropped(event.dataTransfer.files, object.id)
+      }}
       id={`object-${object.id}`}
       style:--color={colorOf(object.number)}
       role="group"
-      aria-label={`Object ${object.number}`}
+      aria-label={`Objekt ${object.number}`}
     >
       <button class="head" aria-expanded={open} onclick={() => (open ? ws.collapse() : ws.activate(object.id))}>
         <span class="main">
           <span class="title" class:empty={!info.title}>{info.title || 'ohne Titel'}</span>
           <span class="sub">
-            Object {object.number} · {info.kind}{info.date ? ` · ${info.date}` : ''} · {info.files}
+            Objekt {object.number} · {info.kind}{info.date ? ` · ${info.date}` : ''} · {info.files}
             {info.files === 1 ? 'Datei' : 'Dateien'}
           </span>
         </span>
@@ -85,13 +99,13 @@
     <div class="row open fresh">
       <div class="head static">
         <span class="main">
-          <span class="title">Neues Object</span>
+          <span class="title">Neues Objekt</span>
           <span class="sub">aus {fresh} {fresh === 1 ? 'Datei' : 'Dateien'}</span>
         </span>
       </div>
     </div>
   {:else if ws.objects.length === 0}
-    <p class="empty-list">Noch keine Objects. Lege Dateien ab und beschreibe sie im Chat.</p>
+    <p class="empty-list">Noch keine Objekte. Lege Dateien ab und beschreibe sie im Chat.</p>
   {/if}
 </div>
 
@@ -99,7 +113,7 @@
   .list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
   .row { flex: none; border: 1px solid #ddd; border-left: 1em solid var(--color, #bbb); border-radius: 4px; background: #fff; }
   .row.open { border-color: #999; border-left-color: var(--color, #bbb); }
-  .row.over { background: #eef3ff; outline: 2px dashed #36c; outline-offset: 1px; }
+  .row.over { background: #eef3ff; }
   .row.fresh { border-style: dashed; border-left-style: solid; --color: #bbb; }
   .head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
   .head.static { cursor: default; }

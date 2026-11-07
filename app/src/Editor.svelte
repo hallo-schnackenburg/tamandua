@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { EditorView, basicSetup } from 'codemirror'
   import { yaml } from '@codemirror/lang-yaml'
-  import { lintGutter, setDiagnostics, type Diagnostic } from '@codemirror/lint'
+  import { setDiagnostics, type Diagnostic } from '@codemirror/lint'
 
   interface Props {
     value: string
@@ -24,7 +24,6 @@
       extensions: [
         basicSetup,
         yaml(),
-        lintGutter(),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onchange(update.state.doc.toString())
         }),
@@ -59,5 +58,8 @@
   /* The editor grows with the text, up to a maximum; longer text scrolls inside. */
   .editor { background: white; }
   .editor :global(.cm-editor) { max-height: 34rem; }
+  /* No line numbers, fold markers or lint markers for now; the text starts at the left edge. */
+  .editor :global(.cm-gutters) { display: none; }
+  .editor :global(.cm-line) { padding-left: 0; }
   .editor :global(.cm-scroller) { overflow: auto; }
 </style>

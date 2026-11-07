@@ -35,12 +35,9 @@
 </script>
 
 <main>
-  <header>
-    <strong>Stadtarchiv</strong>
-    <span class="save" class:failed={ws.saveState === 'failed'}>
-      {ws.saveState === 'saved' ? 'Gespeichert' : ws.saveState === 'saving' ? 'Speichert …' : 'Nicht gespeichert'}
-    </span>
-  </header>
+  {#if ws.saveState === 'failed'}
+    <header>Nicht gespeichert: Änderungen gehen verloren, wenn du die Seite schließt.</header>
+  {/if}
 
   <div class="panes">
     <section class="pane">
@@ -49,24 +46,22 @@
     </section>
 
     <section class="pane">
-      <h2>Objects{#if ws.objects.length > 0} <small>{ws.objects.length}</small>{/if}</h2>
-      <Objects workspace={ws} />
+      <h2>Chat</h2>
+      <Chat workspace={ws} />
     </section>
 
     <section class="pane">
-      <h2>Chat</h2>
-      <Chat workspace={ws} />
+      <h2>Objekte{#if ws.objects.length > 0} <small>{ws.objects.length}</small>{/if}</h2>
+      <Objects workspace={ws} />
     </section>
   </div>
 </main>
 
 <style>
-  main { display: grid; grid-template-rows: auto 1fr; gap: 12px; height: 100%; padding: 12px; }
-  header { display: flex; align-items: center; gap: 10px; }
-  .save { margin-left: auto; color: #777; font-size: 0.85rem; }
-  .save.failed { color: #a11; }
-  .panes { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.6fr) minmax(0, 1fr); /* minmax(0, …): long YAML lines must not widen the pane */ gap: 12px; min-height: 0; }
-  .pane { display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: 6px; padding: 12px; }
+  main { display: flex; flex-direction: column; gap: 12px; height: 100%; padding: 12px; }
+  header { color: #a11; font-size: 0.9rem; }
+  .panes { flex: 1; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.6fr); /* minmax(0, …): long YAML lines must not widen the pane */ gap: 12px; min-height: 0; }
+  .pane { position: relative; display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: 6px; padding: 12px; }
   h2 { margin: 0 0 8px; font-size: 1rem; }
   h2 small { font-weight: 400; color: #777; margin-left: 6px; }
 </style>

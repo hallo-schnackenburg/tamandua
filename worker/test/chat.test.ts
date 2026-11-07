@@ -58,9 +58,9 @@ describe('buildModelRequest', () => {
     )
     const last = built.messages[built.messages.length - 1]
     expect(last.role).toBe('user')
-    expect(last.content).toContain('a.jpg: belongs to object 3')
+    expect(last.content).toContain('a.jpg: belongs to Objekt 3')
     expect(last.content).toContain('b.jpg: no object yet')
-    expect(last.content).toContain('Object 3 (open: /date invalid)')
+    expect(last.content).toContain('Objekt 3 (open: /date invalid)')
     expect(last.content).toContain('title: X')
     expect(last.content).toContain('Brief, Autor Volker H.')
   })
