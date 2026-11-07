@@ -2,7 +2,46 @@
   import { onMount } from 'svelte'
   import { EditorView, basicSetup } from 'codemirror'
   import { yaml } from '@codemirror/lang-yaml'
+  import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+  import { tags } from '@lezer/highlight'
+  import { Decoration, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
   import { setDiagnostics, type Diagnostic } from '@codemirror/lint'
+
+  // Quiet colors: keys in a gray blue, values dark, strings a muted brown.
+  const quiet = HighlightStyle.define([
+    { tag: tags.definition(tags.propertyName), color: '#5a6a8a' },
+    { tag: tags.content, color: '#2f2f2f' },
+    { tag: tags.string, color: '#9a5b46' },
+    { tag: [tags.separator, tags.punctuation, tags.meta], color: '#b0b0b0' },
+    { tag: tags.lineComment, color: '#999', fontStyle: 'italic' },
+  ])
+
+  // The id and the `files` block (hashes, paths, variants) are the least interesting parts: set them back.
+  const quietFiles = Decoration.line({ class: 'cm-files' })
+  function filesLines(view: EditorView): DecorationSet {
+    const ranges = []
+    let inFiles = false
+    for (let n = 1; n <= view.state.doc.lines; n++) {
+      const line = view.state.doc.line(n)
+      if (/^id:/.test(line.text)) ranges.push(quietFiles.range(line.from))
+      if (/^files:/.test(line.text)) inFiles = true
+      else if (inFiles && /^\S/.test(line.text) && !line.text.startsWith('-')) inFiles = false
+      if (inFiles) ranges.push(quietFiles.range(line.from))
+    }
+    return Decoration.set(ranges)
+  }
+  const filesPlugin = ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet
+      constructor(view: EditorView) {
+        this.decorations = filesLines(view)
+      }
+      update(update: ViewUpdate) {
+        if (update.docChanged) this.decorations = filesLines(update.view)
+      }
+    },
+    { decorations: (plugin) => plugin.decorations },
+  )
 
   interface Props {
     value: string
@@ -24,6 +63,8 @@
       extensions: [
         basicSetup,
         yaml(),
+        syntaxHighlighting(quiet),
+        filesPlugin,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onchange(update.state.doc.toString())
         }),
@@ -63,4 +104,5 @@
   .editor :global(.cm-line) { padding-left: 10px; }
   .editor :global(.cm-editor.cm-focused) { outline: none; }
   .editor :global(.cm-scroller) { overflow: auto; }
+  .editor :global(.cm-files), .editor :global(.cm-files span) { color: #b3b3b3 !important; }
 </style>

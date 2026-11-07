@@ -104,8 +104,8 @@
 
 <style>
   .list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-  .row { flex: none; border: 1px solid #ddd; border-left: 1em solid var(--color, #bbb); border-radius: 4px; background: #fff; }
-  .row.open { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 16rem; border-color: #999; border-left-color: var(--color, #bbb); }
+  .row { flex: none; overflow: hidden; border: 2px solid var(--color, #ddd); border-radius: 6px; background: #fff; }
+  .row.open { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 16rem; }
   .row.over { background: #eef3ff; }
   .head { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
   .main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
@@ -113,7 +113,7 @@
   .title.empty { font-weight: 400; color: #999; }
   .sub { font-size: 0.78rem; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .problems { font-size: 0.78rem; color: #a11; white-space: nowrap; }
-  .body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border-top: 1px solid #ddd; }
+  .body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border-top: 1px solid #eee; }
   .issues { margin: 0; padding: 6px 10px; list-style: none; font-size: 0.9rem; border-top: 1px solid #eee; max-height: 8rem; overflow: auto; }
   .issues li { padding: 2px 0; color: #a11; }
   code { background: #eee; padding: 0 4px; border-radius: 3px; }

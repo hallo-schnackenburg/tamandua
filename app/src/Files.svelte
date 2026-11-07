@@ -130,6 +130,23 @@
   }
 </script>
 
+{#snippet badge(kind: 'progress' | 'ok' | 'bad', progress: number, message?: string)}
+  {#if kind === 'progress'}
+    <span class="badge progress" title="wird hochgeladen">
+      <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+        <circle cx="10" cy="10" r="6.5" fill="none" stroke="#dcdcdc" stroke-width="2.4" />
+        <circle cx="10" cy="10" r="6.5" fill="none" stroke="#4a7fd4" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="40.84" stroke-dashoffset={40.84 * (1 - Math.max(0.04, progress))} transform="rotate(-90 10 10)" />
+      </svg>
+    </span>
+  {:else if kind === 'ok'}
+    <span class="badge state ok" title="hochgeladen">
+      <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 10.5l2.6 2.6L14 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </span>
+  {:else}
+    <span class="badge state bad" title={message}>!</span>
+  {/if}
+{/snippet}
+
 <!-- The whole pane is the drop target for files from outside, so there is no small target to aim at.
      Tiles are moved with the pointer (see above); the browser's own dragging of the tiles and their
      preview images is switched off, otherwise it would take a dragged image along as a file, and
@@ -168,6 +185,7 @@
           class:selected={selected.has(file.sha256)}
           class:assigned={!!object}
           class:dragged={ws.dragging.includes(file.sha256)}
+          class:failed={file.status === 'error' || file.status === 'conflict'}
           style:--color={color}
           title={file.name}
           ondragstart={(event) => event.preventDefault()}
@@ -179,29 +197,32 @@
             ws.select(file.sha256, { range: event.shiftKey, toggle: event.metaKey || event.ctrlKey })
           }}
         >
-          {#if file.preview}
-            <img src={urlOf(file.preview)} alt="" draggable="false" />
-          {:else}
-            <span class="noimg">{extension(file.name)}</span>
-          {/if}
+          <span class="thumb">
+            {#if file.preview}
+              <img src={urlOf(file.preview)} alt="" draggable="false" />
+            {:else}
+              <span class="noimg">{extension(file.name)}</span>
+            {/if}
+            {#if file.status === 'uploading'}
+              {@render badge('progress', file.progress ?? 0)}
+            {:else if file.status === 'uploaded'}
+              {@render badge('ok', 1)}
+            {:else}
+              {@render badge('bad', 1, file.message)}
+            {/if}
+          </span>
           <span class="name">{file.name}</span>
-          {#if file.status === 'uploading'}
-            <progress value={file.progress ?? 0} max="1"></progress>
-          {:else if file.status === 'uploaded'}
-            <span class="state ok">✓ hochgeladen</span>
-          {:else}
-            <span class="state bad">! {file.message}</span>
-          {/if}
         </div>
       {/each}
 
       {#each ws.pending as item}
         <div class="tile pending" class:failed={item.state === 'error'}>
-          <span class="noimg">…</span>
+          <span class="thumb">
+            <span class="noimg">…</span>
+            {#if item.state === 'hashing'}{@render badge('progress', item.progress)}{/if}
+          </span>
           <span class="name">{item.name}</span>
-          {#if item.state === 'hashing'}
-            <progress value={item.progress} max="1"></progress>
-          {:else}
+          {#if item.state === 'error'}
             <span class="state bad">! {item.message}</span>
             <button class="close" onclick={() => ws.dismissPending(item)} aria-label="Schließen">×</button>
           {/if}
@@ -232,7 +253,7 @@
   .overlay { position: absolute; z-index: 2; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 0.5rem 1rem; border-radius: 999px; background: rgba(255, 255, 255, 0.92); color: #36c; font-weight: 600; pointer-events: none; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; overflow: auto; align-content: start; padding: 4px; }
-  .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 4px; text-align: left; font: inherit; font-size: 0.78rem; background: #fafafa; border: 3px solid #ddd; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
+  .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 4px; text-align: left; font: inherit; font-size: 0.78rem; background: #fafafa; border: 2px solid #e6e6e6; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
   .tile.assigned { border-color: var(--color); }
   .tile.selected { background: #dbe7fd; }
   .tile.dragged { opacity: 0.5; }
@@ -243,8 +264,9 @@
   .ghost { position: fixed; z-index: 10; pointer-events: none; opacity: 0.92; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25); cursor: grabbing; }
   .count { position: absolute; top: 6px; right: 6px; min-width: 1.4em; padding: 0 5px; border-radius: 10px; background: #1c1c1c; color: #fff; font-weight: 700; text-align: center; }
   .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .state { font-size: 0.72rem; line-height: 1.2; }
-  .state.ok { color: #2b8a3e; }
-  .state.bad { color: #c92a2a; }
-  progress { width: 100%; height: 6px; }
+  .thumb { position: relative; display: block; }
+  .badge { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06); font-size: 0.8rem; font-weight: 700; line-height: 1; pointer-events: none; }
+  .badge.ok { color: #2b8a3e; }
+  .badge.bad { background: #c92a2a; color: #fff; }
+  .state.bad { font-size: 0.72rem; line-height: 1.2; color: #c92a2a; }
 </style>

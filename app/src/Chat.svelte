@@ -111,7 +111,7 @@
   .wait { color: #888; }
   .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px; border: 1px solid #e2e0dc; border-radius: 18px; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06); }
   .composer:focus-within { border-color: #c9c6c0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.09); }
-  .subject { font-size: 0.8rem; color: #555; padding: 2px 8px; background: #f4f2ee; border-radius: 10px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subject { font-size: 0.8rem; color: #6b5a1e; padding: 2px 8px; background: #f7f0d2; border-radius: 10px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   textarea { resize: none; font: inherit; line-height: 1.4; min-height: 1.4em; padding: 2px 40px 2px 2px; border: 0; outline: none; background: transparent; }
   textarea::placeholder { color: #aaa; }
   .send { position: absolute; right: 8px; bottom: 8px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: #1f1f1f; color: #fff; cursor: pointer; }
