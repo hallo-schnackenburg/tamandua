@@ -55,9 +55,9 @@
 <div class="editor" bind:this={host}></div>
 
 <style>
-  /* The editor grows with the text, up to a maximum; longer text scrolls inside. */
-  .editor { background: white; }
-  .editor :global(.cm-editor) { max-height: 34rem; }
+  /* The editor is as tall as its text, but at most as tall as the room the open row has; longer text scrolls inside. */
+  .editor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; background: white; }
+  .editor :global(.cm-editor) { flex: 1 1 auto; min-height: 0; }
   /* No line numbers, fold markers or lint markers for now; the text lines up with the title above. */
   .editor :global(.cm-gutters) { display: none; }
   .editor :global(.cm-line) { padding-left: 10px; }

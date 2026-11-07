@@ -3,7 +3,7 @@
 // (`$state`) outside of a component: everything declared with `$state` here updates
 // whatever shows it, wherever that is.
 
-import { addFile, readField, removeFile, setField, ulid, validateObjectYaml, type FileEntry } from '@archive/core'
+import { addFile, readField, readValue, removeFile, setField, ulid, validateObjectYaml, type FileEntry } from '@archive/core'
 import type { Agent, ToolCall } from './agent.js'
 import * as db from './db.js'
 import { FIELD_NAMES, objectLabel } from './labels.js'
@@ -88,6 +88,8 @@ interface Change {
   created?: string
   set: string[]
   kept: string[]
+  /** Points that were set, in words for the user. */
+  points: string[]
 }
 /** The result of carrying out tool calls: `log` is what was done, `changes` is what the user is told. */
 interface Out {
@@ -113,6 +115,11 @@ function missing(text: string): string[] {
   const found = validateObjectYaml(text).map((issue) => /missing field "(\w+)"/.exec(issue.message)?.[1] ?? issue.path.split('/')[1] ?? '')
   return [...new Set(found.filter(Boolean))].map((field) => FIELD_NAMES[field] ?? field)
 }
+
+/** Six decimals are about ten centimeters: plenty. */
+const round = (x: number): number => Math.round(x * 1e6) / 1e6
+
+const PRECISION_NAMES: Record<string, string> = { exact: 'genau', street: 'auf die Straße genau', town: 'auf den Ort genau', region: 'nur ungefähr' }
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'de', { numeric: true })
 
@@ -360,6 +367,7 @@ export class Workspace {
   collapse() {
     this.active = undefined
     this.#markUi()
+    this.focusTick++
   }
 
   // --- rearranging: files go into an object, or come out of it ---
@@ -458,6 +466,7 @@ export class Workspace {
       this.#anchor = freed[0].sha256
       this.active = freed[0].sha256
       this.#markUi()
+      this.focusTick++
     }
   }
 
@@ -536,6 +545,9 @@ export class Workspace {
       try {
         if (call.tool === 'say') {
           said.push(call.text)
+        } else if (call.tool === 'set_geocode') {
+          const object = this.#geocode(call, out)
+          if (object) touched.push(object)
         } else if (call.tool === 'create_object') {
           touched.push(...this.#create(call, target, out))
         } else {
@@ -553,9 +565,62 @@ export class Workspace {
     if (touched.length > 0) this.#settle([...new Set(touched)])
   }
 
+  /** A point from the map service goes onto the object's location, an entity of it, or one of its subjects. */
+  #geocode(call: Extract<ToolCall, { tool: 'set_geocode' }>, out: Out): ObjectRecord | undefined {
+    const object = this.objects.find((o) => o.number === call.object)
+    if (!object) {
+      out.notes.push(`Objekt ${call.object} gibt es nicht.`)
+      return undefined
+    }
+    const point = { lat: round(call.lat), lon: round(call.lon), precision: call.precision, source: call.source }
+    let field: string
+    let value: unknown
+    let old: unknown
+    let where: string
+    if (call.for === 'object') {
+      field = 'geocode'
+      old = readValue(object.text, 'geocode')
+      value = point
+      where = FIELD_NAMES.location
+    } else if (call.for === 'subject') {
+      field = 'subjects'
+      const list = readValue(object.text, 'subjects')
+      const wanted = (call.subject ?? '').trim().toLowerCase()
+      const index = Array.isArray(list) ? list.findIndex((s) => String((s as { name?: unknown })?.name ?? '').trim().toLowerCase() === wanted) : -1
+      if (!Array.isArray(list) || index < 0) {
+        out.notes.push(`${refer(object)}: Einen Bezug „${call.subject}“ gibt es nicht, deshalb habe ich keine Koordinaten gesetzt.`)
+        return undefined
+      }
+      old = list
+      value = list.map((s, i) => (i === index ? { ...(s as object), geocode: point } : s))
+      where = `Bezug „${(list[index] as { name: string }).name}“`
+    } else {
+      field = call.for
+      const entity = readValue(object.text, call.for)
+      if (typeof entity !== 'object' || entity === null || Array.isArray(entity)) {
+        out.notes.push(`${refer(object)}: ${FIELD_NAMES[call.for] ?? call.for} ist nicht angegeben, deshalb habe ich keine Koordinaten gesetzt.`)
+        return undefined
+      }
+      old = entity
+      value = { ...entity, geocode: point }
+      where = FIELD_NAMES[call.for] ?? call.for
+    }
+    const result = setField(object.text, field, value, old)
+    if (!result.ok) {
+      out.notes.push(`${refer(object)}: Koordinaten nicht gesetzt, du hast ${where} inzwischen selbst geändert.`)
+      return undefined
+    }
+    object.text = result.text
+    object.updatedAt = Date.now()
+    this.#markObject(object.id)
+    out.log.push(`Objekt ${object.number}: Koordinaten für ${where} gesetzt: ${point.lat}, ${point.lon} (${call.precision}, ${call.source}, „${call.label}“).`)
+    this.#change(out, object).points.push(`Koordinaten für ${where}: „${call.label}“, ${PRECISION_NAMES[call.precision]}.`)
+    return object
+  }
+
   #change(out: Out, object: ObjectRecord): Change {
     let change = out.changes.get(object)
-    if (!change) out.changes.set(object, (change = { set: [], kept: [] }))
+    if (!change) out.changes.set(object, (change = { set: [], kept: [], points: [] }))
     return change
   }
 
@@ -567,6 +632,7 @@ export class Workspace {
       const set = [...new Set(change.set)]
       if (change.created) parts.push(`Ich habe ${refer(object)} angelegt (${change.created})${set.length ? ` und ausgefüllt: ${set.join(', ')}` : ''}.`)
       else if (set.length) parts.push(`${refer(object)}: ${set.join(', ')} gesetzt.`)
+      for (const point of change.points) parts.push(point)
       if (change.kept.length) parts.push(`Nicht überschrieben, weil du es selbst geändert hast: ${change.kept.join('; ')}.`)
       const open = change.created || set.length ? missing(object.text) : []
       if (open.length) parts.push(`Es fehlt noch: ${open.join(', ')}.`)

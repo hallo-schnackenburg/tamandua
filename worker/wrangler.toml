@@ -7,6 +7,11 @@ compatibility_date = "2026-09-01"
 ALLOWED_ORIGIN = "http://localhost:5173"
 MODEL = "claude-haiku-5-5"
 
+# Coordinate lookup (OpenStreetMap Nominatim): countries to search in (empty: everywhere) and the
+# User-Agent it needs; name the application and how to reach you, e.g. "archive-capture (you@example.org)".
+GEOCODE_COUNTRIES = "de"
+GEOCODE_USER_AGENT = "archive-capture"
+
 # The Anthropic key is a secret and is not written here:
 #   local:       worker/.dev.vars          (ANTHROPIC_API_KEY=...; not in git)
 #   deployed:    npx wrangler secret put ANTHROPIC_API_KEY

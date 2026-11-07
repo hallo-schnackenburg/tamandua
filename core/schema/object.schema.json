@@ -199,7 +199,8 @@
         "precision": {
           "description": "How exact the point is.",
           "enum": ["exact", "street", "town", "region"]
-        }
+        },
+        "source": { "description": "Where the point comes from, e.g. osm (OpenStreetMap).", "type": "string" }
       },
       "additionalProperties": false
     },

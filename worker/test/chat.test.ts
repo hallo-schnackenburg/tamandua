@@ -43,7 +43,7 @@ describe('buildModelRequest', () => {
     const built = buildModelRequest(request(), 'claude-haiku-5-5')
     expect(built.model).toBe('claude-haiku-5-5')
     expect(built.tool_choice).toEqual({ type: 'any' })
-    expect(built.tools.map((t) => t.name)).toEqual(['create_object', 'patch', 'say'])
+    expect(built.tools.map((t) => t.name)).toEqual(['create_object', 'patch', 'geocode', 'say'])
   })
 
   it('sends no sampling parameters, which Haiku 5.5 rejects', () => {
@@ -100,6 +100,24 @@ describe('toToolCalls', () => {
       { tool: 'create_object', type: 'document', subtype: 'letter', together: true, fields: { origin: { name: 'Volker H.' } } },
       { tool: 'patch', object: 3, field: 'title', value: 'X', old: 'Y' },
       { tool: 'say', text: 'Hallo' },
+    ])
+  })
+
+  it('converts a geocode call and drops one that is incomplete', () => {
+    expect(
+      toToolCalls(
+        answer(
+          { type: 'tool_use', name: 'geocode', input: { object: 3, for: 'object', query: ' Aussichtsturm, Schnackenburg ' } },
+          { type: 'tool_use', name: 'geocode', input: { object: 3, for: 'subject', subject: 'Turm', query: 'Turm' } },
+          { type: 'tool_use', name: 'geocode', input: { object: 3, for: 'subject', query: 'Turm' } }, // no name of the subject
+          { type: 'tool_use', name: 'geocode', input: { object: 3, for: 'somewhere', query: 'Turm' } },
+          { type: 'tool_use', name: 'say', input: { text: 'ok' } },
+        ),
+      ),
+    ).toEqual([
+      { tool: 'geocode', object: 3, for: 'object', subject: undefined, query: 'Aussichtsturm, Schnackenburg' },
+      { tool: 'geocode', object: 3, for: 'subject', subject: 'Turm', query: 'Turm' },
+      { tool: 'say', text: 'ok' },
     ])
   })
 

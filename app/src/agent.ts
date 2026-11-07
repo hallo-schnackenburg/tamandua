@@ -43,6 +43,19 @@ export type ToolCall =
     }
   /** Changes one field. `old` is the value the agent saw; if the user changed it since, the call is skipped. */
   | { tool: 'patch'; object: number; field: string; value: unknown; old?: unknown }
+  /** Sets a point from the map service on the object's location, an entity of it (origin, holder, owner) or one subject (by name). */
+  | {
+      tool: 'set_geocode'
+      object: number
+      for: 'object' | 'origin' | 'holder' | 'owner' | 'subject'
+      subject?: string
+      lat: number
+      lon: number
+      precision: 'exact' | 'street' | 'town' | 'region'
+      /** What was found, for the user to check. */
+      label: string
+      source: string
+    }
   /** Answers or asks the user something. */
   | { tool: 'say'; text: string }
 

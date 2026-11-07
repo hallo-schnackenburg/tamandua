@@ -23,6 +23,7 @@ export const FIELD_NAMES: Record<string, string> = {
   subjects: 'Bezüge',
   recipient: 'Empfänger',
   location: 'Ort',
+  geocode: 'Koordinaten',
   description: 'Beschreibung',
   notes: 'Notizen',
   language: 'Sprache',

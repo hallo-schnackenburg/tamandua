@@ -5,9 +5,10 @@
 // NOT YET THERE (needed before this is deployed for others): checking who is asking
 // (GitHub), a limit per person, and a spending cap. Until then it only runs locally.
 
+import { resolveGeocodes, type GeocodeEnv } from './geocode.js'
 import { BadRequest, buildModelRequest, parseChatRequest, toToolCalls } from './chat.js'
 
-export interface Env {
+export interface Env extends GeocodeEnv {
   ANTHROPIC_API_KEY?: string
   ALLOWED_ORIGIN?: string
   MODEL?: string
@@ -27,7 +28,12 @@ function json(body: unknown, status: number, env: Env): Response {
 }
 
 /** `fetchFn` is the network; tests pass a fake. */
-export async function handle(request: Request, env: Env, fetchFn: typeof fetch = fetch): Promise<Response> {
+export async function handle(
+  request: Request,
+  env: Env,
+  fetchFn: typeof fetch = fetch,
+  pause?: (ms: number) => Promise<void>,
+): Promise<Response> {
   const { pathname } = new URL(request.url)
 
   if (request.method === 'OPTIONS') {
@@ -82,7 +88,8 @@ export async function handle(request: Request, env: Env, fetchFn: typeof fetch =
     }
     return json({ error: `The model answered with an error (${answer.status})${reason ? `: ${reason}` : ''}` }, 502, env)
   }
-  return json({ calls: toToolCalls(await answer.json()) }, 200, env)
+  const calls = await resolveGeocodes(toToolCalls(await answer.json()), env, fetchFn, pause)
+  return json({ calls }, 200, env)
 }
 
 export default {

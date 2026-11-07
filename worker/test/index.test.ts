@@ -25,6 +25,18 @@ describe('POST /chat', () => {
     expect(JSON.parse(init.body as string).model).toBe('claude-haiku-5-5')
   })
 
+  it('looks up a geocode call and returns the point instead', async () => {
+    const answerFetch = vi.fn(async (url: string) =>
+      url.startsWith('https://nominatim')
+        ? new Response(JSON.stringify([{ lat: '53.04', lon: '11.55', display_name: 'Turm, Schnackenburg', category: 'man_made', type: 'tower' }]))
+        : new Response(JSON.stringify({ content: [{ type: 'tool_use', name: 'geocode', input: { object: 3, for: 'object', query: 'Turm' } }] })),
+    )
+    const response = await handle(post(body), env, asFetch(answerFetch), async () => {})
+    expect(await response.json()).toEqual({
+      calls: [{ tool: 'set_geocode', object: 3, for: 'object', lat: 53.04, lon: 11.55, precision: 'exact', label: 'Turm, Schnackenburg', source: 'osm' }],
+    })
+  })
+
   it('uses the model from the settings', async () => {
     const fake = modelAnswer([{ type: 'text', text: 'ok' }])
     await handle(post(body), { ...env, MODEL: 'other-model' }, asFetch(fake))

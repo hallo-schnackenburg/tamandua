@@ -23,7 +23,15 @@ function database(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(CHAT)) db.createObjectStore(CHAT, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: 'id' })
     }
-    request.onsuccess = () => resolve(request.result)
+    request.onsuccess = () => {
+      const db = request.result
+      // Another tab upgrades or someone deletes the database: let go of it, otherwise that waits for us forever.
+      db.onversionchange = () => {
+        db.close()
+        opened = undefined
+      }
+      resolve(db)
+    }
     request.onerror = () => reject(request.error)
   })
   return opened
@@ -64,6 +72,19 @@ function readAll<T>(store: string): Promise<T[]> {
         request.onerror = () => reject(request.error)
       }),
   )
+}
+
+/** Deletes everything stored in the browser. For development. */
+export async function reset(): Promise<void> {
+  const db = await database()
+  db.close()
+  opened = undefined
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(DB_NAME)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+    request.onblocked = () => resolve() // closed above; other tabs close on their own
+  })
 }
 
 /** What the user was looking at: restored after a reload. */

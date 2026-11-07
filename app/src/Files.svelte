@@ -151,7 +151,7 @@
   {ondrop}
 >
   {#if ws.files.length === 0 && ws.pending.length === 0}
-    <label class="hint">
+    <label class="hint empty-state">
       <span>Dateien hierher ziehen</span>
       <small>oder klicken zum Auswählen</small>
       <input type="file" multiple onchange={onpick} />
@@ -224,9 +224,8 @@
 </div>
 
 <style>
-  .zone { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .hint { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 2px dashed #bbb; border-radius: 6px; color: #666; cursor: pointer; text-align: center; }
-  .hint small { color: #999; }
+  .zone { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .hint { pointer-events: auto; cursor: pointer; }
   input[type='file'] { display: none; }
   .close { border: 0; background: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 2px; }
   :global(main .pane.drop::after) { content: ''; position: absolute; inset: 0; border-radius: 6px; background: rgba(157, 188, 247, 0.5); pointer-events: none; }

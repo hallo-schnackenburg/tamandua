@@ -16,7 +16,6 @@
   )
 
   // Selected files without an object: a row "new object" stands in for it, below the others.
-  const fresh = $derived(!active && ws.target.filter((f) => !f.objectId).length)
 
   // What a closed row shows.
   function summary(object: ObjectRecord) {
@@ -95,35 +94,26 @@
     </div>
   {/each}
 
-  {#if fresh}
-    <div class="row open fresh">
-      <div class="head static">
-        <span class="main">
-          <span class="title">Neues Objekt</span>
-          <span class="sub">aus {fresh} {fresh === 1 ? 'Datei' : 'Dateien'}</span>
-        </span>
-      </div>
-    </div>
-  {:else if ws.objects.length === 0}
-    <p class="empty-list">Noch keine Objekte. Lege Dateien ab und beschreibe sie im Chat.</p>
+  {#if ws.objects.length === 0}
+    <p class="empty-state">
+      <span>Keine Objekte</span>
+      <small>Lege Dateien ab und beschreibe sie.</small>
+    </p>
   {/if}
 </div>
 
 <style>
   .list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
   .row { flex: none; border: 1px solid #ddd; border-left: 1em solid var(--color, #bbb); border-radius: 4px; background: #fff; }
-  .row.open { border-color: #999; border-left-color: var(--color, #bbb); }
+  .row.open { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 16rem; border-color: #999; border-left-color: var(--color, #bbb); }
   .row.over { background: #eef3ff; }
-  .row.fresh { border-style: dashed; border-left-style: solid; --color: #bbb; }
-  .head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
-  .head.static { cursor: default; }
+  .head { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
   .main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title.empty { font-weight: 400; color: #999; }
   .sub { font-size: 0.78rem; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .problems { font-size: 0.78rem; color: #a11; white-space: nowrap; }
-  .body { border-top: 1px solid #ddd; }
-  .empty-list { margin: 0; padding: 8px 10px; color: #777; font-size: 0.9rem; }
+  .body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border-top: 1px solid #ddd; }
   .issues { margin: 0; padding: 6px 10px; list-style: none; font-size: 0.9rem; border-top: 1px solid #eee; max-height: 8rem; overflow: auto; }
   .issues li { padding: 2px 0; color: #a11; }
   code { background: #eee; padding: 0 4px; border-radius: 3px; }

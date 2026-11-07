@@ -16,6 +16,13 @@ export type ToolCall =
   | { tool: 'create_object'; type: ObjectType; subtype?: string; together?: boolean; fields?: Record<string, unknown> }
   | { tool: 'patch'; object: number; field: string; value: unknown; old?: unknown }
   | { tool: 'say'; text: string }
+  /** The model asks for a lookup; the Worker resolves it into `set_geocode` before it answers the browser. */
+  | { tool: 'geocode'; object: number; for: GeocodeFor; subject?: string; query: string }
+  | { tool: 'set_geocode'; object: number; for: GeocodeFor; subject?: string; lat: number; lon: number; precision: 'exact' | 'street' | 'town' | 'region'; label: string; source: string }
+
+/** Which place of an object gets the point: its own location, origin, holder, owner, or one of its subjects. */
+export type GeocodeFor = 'object' | 'origin' | 'holder' | 'owner' | 'subject'
+const GEOCODE_FOR: readonly GeocodeFor[] = ['object', 'origin', 'holder', 'owner', 'subject']
 
 export class BadRequest extends Error {}
 
@@ -65,6 +72,7 @@ Context you get with each message: the files the message is about, and for files
 Tools:
 - create_object: for files that belong to no object yet. type is one of: ${TYPE_LIST}. An image is always one object per file. A document takes all files as pages of ONE object (together true); set together false only if the user clearly means separate documents ("drei Briefe", "jeweils ein Brief"). Set subtype only when it is clear; otherwise leave it out. Put everything the user said into fields.
 - patch: change one field of an existing object (by its number). Pass the value you saw as "old" (leave it out if the field was not there), so that nothing the user typed in the meantime is overwritten.
+- geocode: look up the coordinates of a place on the map. The app sets the result and tells the user, so do not repeat it. Use it only when the user asks for coordinates or the exact position.
 - say: answer or ask a short question. Use it when something is unclear, when the user asks something, or in addition to other calls if you must point something out. The app itself confirms every object created and every field set, so do not repeat that; say something only for assumptions, hints or questions.
 
 Fields (YAML keys, in English): title, description, date, location, origin, holder, owner, subjects, notes; documents also recipient and language (e.g. "de").
@@ -118,6 +126,21 @@ export const TOOLS = [
         old: { ...VALUE, description: 'The current value, if the field had one.' },
       },
       required: ['object', 'field', 'value'],
+    },
+  },
+  {
+    name: 'geocode',
+    description:
+      'Look up the coordinates of a place on the map (OpenStreetMap) and set them on the object. Use it when the user asks for coordinates or the exact position of a place. Never write coordinates yourself.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        object: { type: 'integer', description: 'The number of the object.' },
+        for: { enum: GEOCODE_FOR, description: 'object: the object\'s own location; origin, holder, owner: that entity\'s place; subject: one of the subjects (give its name).' },
+        subject: { type: 'string', description: 'Only for "subject": the name of the subject as it is in the object.' },
+        query: { type: 'string', description: 'What to search for, with the town, e.g. "Aussichtsturm, Schnackenburg".' },
+      },
+      required: ['object', 'for', 'query'],
     },
   },
   {
@@ -190,6 +213,22 @@ export function toToolCalls(response: unknown): ToolCall[] {
         subtype: typeof input.subtype === 'string' && subtypes.includes(input.subtype) ? input.subtype : undefined,
         together: typeof input.together === 'boolean' ? input.together : undefined,
         fields: isRecord(input.fields) ? input.fields : undefined,
+      })
+    } else if (
+      block.name === 'geocode' &&
+      Number.isInteger(input.object) &&
+      typeof input.query === 'string' &&
+      input.query.trim() &&
+      typeof input.for === 'string' &&
+      (GEOCODE_FOR as readonly string[]).includes(input.for) &&
+      (input.for !== 'subject' || typeof input.subject === 'string')
+    ) {
+      calls.push({
+        tool: 'geocode',
+        object: input.object as number,
+        for: input.for as GeocodeFor,
+        subject: typeof input.subject === 'string' ? input.subject : undefined,
+        query: input.query.trim(),
       })
     } else if (block.name === 'patch' && Number.isInteger(input.object) && typeof input.field === 'string' && 'value' in input) {
       calls.push({ tool: 'patch', object: input.object as number, field: input.field, value: input.value, old: input.old })

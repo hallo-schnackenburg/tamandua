@@ -136,6 +136,7 @@ describe('origin and subjects', () => {
     const geocode = { lat: 52.99, lon: 11.57, precision: 'exact' }
     expect(messages(photo(), (o) => (o.subjects[0] = { name: 'Haus', type: 'building', location: 'Markt 3', geocode }))).toEqual([])
     expect(messages(photo(), (o) => (o.origin.geocode = { lat: 1 }))).toContain('/origin/geocode: missing field "lon"')
+    expect(messages(photo(), (o) => (o.geocode = { lat: 52.99, lon: 11.57, precision: 'exact', source: 'osm' }))).toEqual([])
   })
 
   it('report a misspelled field', () => {
