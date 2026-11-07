@@ -6,9 +6,9 @@ Alles in der GitHub-Organisation bzw. dem Konto, dem das Daten-Repo gehört.
 ## 1. Daten-Repo
 
 1. Repo anlegen (`archive-dev`, später `archive`), öffentlich.
-2. Den Inhalt von `templates/archive/` aus diesem Repo hineinkopieren
-   (`.github/workflows/validate.yml`) und in der Datei `OWNER/tamandua` durch
-   den echten Namen des Tool-Repos ersetzen.
+2. Den Inhalt von `templates/archive/` aus diesem Repo
+   (`.github/workflows/validate.yml`) hineinkopieren. Die Vorlage holt das Tool-Repo
+   `hallo-schnackenburg/tamandua`; es muss öffentlich sein.
 3. Settings > General: "Automatically delete head branches" einschalten.
 4. Settings > Branches: Regel für `main`: "Require a pull request before merging" und
    "Require status checks to pass" mit dem Check `validate`.
@@ -47,3 +47,13 @@ Wer mitmachen soll, wird im Daten-Repo als Collaborator mit Write-Rechten
 eingeladen. Wer sich anmeldet und kein Schreibrecht hat, sieht den Hinweis,
 dass er noch eingeladen werden muss. Wer Admin oder Maintainer ist, kann prüfen
 und Pull Requests annehmen.
+
+## 5. Ablauf der Erfassung
+
+- Das erste gesicherte Objekt legt den Branch `erfassung/<login>` und einen Entwurf (Draft-Pull-Request) an. Jede
+  weitere Sicherung ist ein Commit auf diesem Branch; der Entwurf zeigt immer den aktuellen Stand und `validate`
+  läuft bei jedem Commit.
+- Die App sichert eine Sekunde nach jeder eigenen Änderung (Objekt angelegt, Agent hat Felder gesetzt, Dateien
+  zugeordnet) und 30 Sekunden nach der letzten Eingabe im Editor.
+- "Einreichen" stellt den Entwurf auf "Ready for review". Entwürfe filterst du in der PR-Liste mit `-is:draft` aus.
+- Nach dem Merge löscht GitHub den Branch; die nächste Sicherung beginnt mit einem neuen Entwurf.

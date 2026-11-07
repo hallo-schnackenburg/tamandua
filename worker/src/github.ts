@@ -124,6 +124,15 @@ export interface Pull {
   url: string
   state: 'open' | 'closed'
   merged: boolean
+  /** A draft cannot be merged and does not ask anybody to review it. */
+  draft: boolean
+}
+
+interface OpenPull {
+  number: number
+  html_url: string
+  node_id: string
+  draft?: boolean
 }
 
 /** One person's work on the data repository: their own branch and its pull request. */
@@ -178,14 +187,50 @@ export class Repo {
     }
   }
 
-  /** The open pull request of the branch, or a new one. Throws a 409 if there is nothing to submit. */
-  async submit(branch: string, title: string, body: string): Promise<Pull> {
+  private async openPull(branch: string): Promise<OpenPull | undefined> {
     const owner = this.repo.split('/')[0]
-    const open = await this.call<{ number: number; html_url: string }[]>('GET', `/pulls?state=open&base=${this.base}&head=${owner}:${branch}`)
-    if (open.length > 0) return { number: open[0].number, url: open[0].html_url, state: 'open', merged: false }
+    const open = await this.call<OpenPull[]>('GET', `/pulls?state=open&base=${this.base}&head=${owner}:${branch}`)
+    return open[0]
+  }
+
+  private static view(pull: OpenPull): Pull {
+    return { number: pull.number, url: pull.html_url, state: 'open', merged: false, draft: pull.draft === true }
+  }
+
+  /**
+   * The open pull request of the branch; if there is none, a new one as a draft. Returns nothing if
+   * GitHub does not want one (e.g. the branch has no commit that is not in the base branch yet).
+   */
+  async draft(branch: string, title: string, body: string): Promise<Pull | undefined> {
+    const existing = await this.openPull(branch)
+    if (existing) return Repo.view(existing)
     try {
-      const created = await this.call<{ number: number; html_url: string }>('POST', '/pulls', { title, head: branch, base: this.base, body })
-      return { number: created.number, url: created.html_url, state: 'open', merged: false }
+      const created = await this.call<OpenPull>('POST', '/pulls', { title, head: branch, base: this.base, body, draft: true })
+      return Repo.view({ ...created, draft: true })
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 422) return undefined
+      throw error
+    }
+  }
+
+  /**
+   * Asks for a review: the draft of the branch is marked ready. If the branch has no pull request yet,
+   * a new one is opened (not as a draft). Throws a 409 if there is nothing to submit.
+   */
+  async submit(branch: string, title: string, body: string): Promise<Pull> {
+    const existing = await this.openPull(branch)
+    if (existing?.draft) {
+      const answer = await call<{ errors?: { message: string }[] }>(this.fetchFn, this.token, 'POST', '/graphql', {
+        query: 'mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { number } } }',
+        variables: { id: existing.node_id },
+      })
+      if (answer.errors?.length) throw new GitHubError(answer.errors[0].message, 502)
+      return Repo.view({ ...existing, draft: false })
+    }
+    if (existing) return Repo.view(existing)
+    try {
+      const created = await this.call<OpenPull>('POST', '/pulls', { title, head: branch, base: this.base, body })
+      return Repo.view({ ...created, draft: false })
     } catch (error) {
       if (error instanceof GitHubError && error.status === 422) throw new GitHubError('There is nothing new to submit.', 409)
       throw error
@@ -193,7 +238,7 @@ export class Repo {
   }
 
   async pull(number: number): Promise<Pull> {
-    const data = await this.call<{ number: number; html_url: string; state: 'open' | 'closed'; merged: boolean }>('GET', `/pulls/${number}`)
-    return { number: data.number, url: data.html_url, state: data.state, merged: data.merged }
+    const data = await this.call<{ number: number; html_url: string; state: 'open' | 'closed'; merged: boolean; draft?: boolean }>('GET', `/pulls/${number}`)
+    return { number: data.number, url: data.html_url, state: data.state, merged: data.merged, draft: data.draft === true }
   }
 }

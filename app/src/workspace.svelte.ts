@@ -54,8 +54,13 @@ export type Session =
   | { state: 'user'; user: User }
   | { state: 'error'; message: string }
 
-/** How long after the last change the objects are saved to GitHub, and how long to wait after a failure. */
-const SYNC_DELAY = 30_000
+/**
+ * When objects are saved to GitHub: a second after the last change the app itself made (an object was
+ * created, the agent set fields, files were moved; one commit per answer of the agent), 30 seconds after
+ * the last change the person typed in the editor, and a minute after a failure.
+ */
+const APP_DELAY = 1_000
+const TYPING_DELAY = 30_000
 const SYNC_RETRY = 60_000
 
 /** A file that is still being hashed, or could not be read. */
@@ -177,7 +182,9 @@ export class Workspace {
   #store: FileStore
   #agent: Agent
   #backend: Backend
-  #syncTimer: ReturnType<typeof setTimeout> | undefined
+  #appTimer: ReturnType<typeof setTimeout> | undefined
+  #typingTimer: ReturnType<typeof setTimeout> | undefined
+  #removedFiles = new Set<string>()
   #syncing = false
   #syncAgain = false
   #anchor: string | undefined
@@ -768,7 +775,9 @@ export class Workspace {
     if (!object) return
     object.text = text
     object.updatedAt = Date.now()
-    this.#markObject(object.id)
+    this.#dirtyObjects.add(object.id)
+    this.#schedule()
+    this.#syncAfterTyping()
   }
 
   // --- saving: shortly after the last change, and at once when the tab is left ---
@@ -788,10 +797,11 @@ export class Workspace {
     this.#schedule()
   }
 
+  /** The app changed an object. */
   #markObject(id: string) {
     this.#dirtyObjects.add(id)
     this.#schedule()
-    this.#syncSoon()
+    this.#syncAfterApp()
   }
 
   #schedule() {
@@ -807,11 +817,13 @@ export class Workspace {
     this.#dirtyObjects.clear()
     const removed = [...this.#removedObjects]
     this.#removedObjects.clear()
+    const removedFiles = [...this.#removedFiles]
+    this.#removedFiles.clear()
     const chat = this.#dirtyChat
     this.#dirtyChat = false
     const ui = this.#dirtyUi
     this.#dirtyUi = false
-    if (files.length === 0 && objects.length === 0 && removed.length === 0 && !chat && !ui) return
+    if (files.length === 0 && objects.length === 0 && removed.length === 0 && removedFiles.length === 0 && !chat && !ui) return
 
     this.saveState = 'saving'
     try {
@@ -820,6 +832,7 @@ export class Workspace {
       await db.save(plainFiles, objects.map((o) => $state.snapshot(o)), chat ? $state.snapshot(this.chat.slice(-200)) : undefined,
         removed,
         ui ? { selection: $state.snapshot(this.selection), active: this.active } : undefined,
+        removedFiles,
       )
       this.saveState = 'saved'
     } catch {
@@ -839,7 +852,7 @@ export class Workspace {
       const user = await this.#backend.me()
       this.session = user ? { state: 'user', user } : { state: 'anonymous', notice }
       if (user) {
-        this.#syncSoon(1000)
+        this.#syncAfterApp()
         void this.checkPulls()
       }
     } catch (error) {
@@ -850,13 +863,13 @@ export class Workspace {
   /** The server says the session is over. What is in the browser stays. */
   signedOut() {
     if (this.session.state === 'anonymous') return
-    clearTimeout(this.#syncTimer)
+    this.#stopTimers()
     this.session = { state: 'anonymous', notice: 'Deine Sitzung ist abgelaufen. Bitte melde dich neu an.' }
   }
 
   async logout() {
     await this.#backend.logout()
-    clearTimeout(this.#syncTimer)
+    this.#stopTimers()
     this.session = { state: 'anonymous' }
   }
 
@@ -867,6 +880,35 @@ export class Workspace {
     return object.stage ?? 'saved'
   }
 
+  /** Objects that are in the archive now. */
+  get merged(): ObjectRecord[] {
+    return this.objects.filter((o) => this.standing(o) === 'merged')
+  }
+
+  /** Takes the accepted objects and their files out of this view. They stay in the repository and the bucket. */
+  removeMerged() {
+    const gone = this.merged
+    if (gone.length === 0) return
+    const ids = new Set(gone.map((o) => o.id))
+    const files = this.files.filter((f) => f.objectId && ids.has(f.objectId))
+    const shas = new Set(files.map((f) => f.sha256))
+    this.objects = this.objects.filter((o) => !ids.has(o.id))
+    this.files = this.files.filter((f) => !shas.has(f.sha256))
+    for (const id of ids) {
+      this.#dirtyObjects.delete(id)
+      this.#removedObjects.add(id)
+    }
+    for (const sha of shas) {
+      this.#dirtyFiles.delete(sha)
+      this.#removedFiles.add(sha)
+    }
+    this.selection = this.selection.filter((sha) => !shas.has(sha))
+    if (this.active && shas.has(this.active)) this.active = undefined
+    this.#markUi()
+    this.#schedule()
+    this.#say('log', `${gone.length === 1 ? 'Ein übernommenes Objekt' : `${gone.length} übernommene Objekte`} aus der Ansicht entfernt.`)
+  }
+
   /** The objects the next pull request would bring: everything that is not already part of one. */
   get outgoing(): ObjectRecord[] {
     return this.objects.filter((o) => {
@@ -875,15 +917,28 @@ export class Workspace {
     })
   }
 
-  #syncSoon(delay = SYNC_DELAY) {
+  #stopTimers() {
+    clearTimeout(this.#appTimer)
+    clearTimeout(this.#typingTimer)
+  }
+
+  /** The app changed something: save in a second (the changes of one answer go into one commit). */
+  #syncAfterApp() {
     if (this.session.state !== 'user') return
-    clearTimeout(this.#syncTimer)
-    this.#syncTimer = setTimeout(() => void this.sync(), delay)
+    clearTimeout(this.#appTimer)
+    this.#appTimer = setTimeout(() => void this.sync(), APP_DELAY)
+  }
+
+  /** The person typed: save when it has been quiet for a while, or earlier if the app saves anyway. */
+  #syncAfterTyping(delay = TYPING_DELAY) {
+    if (this.session.state !== 'user') return
+    clearTimeout(this.#typingTimer)
+    this.#typingTimer = setTimeout(() => void this.sync(), delay)
   }
 
   /** Saves every changed object to the person's branch in one commit. Returns whether everything is saved. */
   async sync(): Promise<boolean> {
-    clearTimeout(this.#syncTimer)
+    this.#stopTimers()
     if (this.session.state !== 'user') return false
     if (this.#syncing) {
       this.#syncAgain = true
@@ -913,14 +968,14 @@ export class Workspace {
       } else {
         this.syncState = 'failed'
         this.syncError = (error as Error).message
-        this.#syncSoon(SYNC_RETRY)
+        this.#syncAfterTyping(SYNC_RETRY)
       }
     } finally {
       this.#syncing = false
     }
-    if (this.#syncAgain || this.objects.some((o) => o.text !== o.synced)) {
+    if (this.#syncAgain) {
       this.#syncAgain = false
-      if (ok) this.#syncSoon()
+      this.#syncAfterApp()
     }
     return ok && !this.objects.some((o) => o.text !== o.synced)
   }

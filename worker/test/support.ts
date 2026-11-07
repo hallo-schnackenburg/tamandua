@@ -37,12 +37,12 @@ export interface Call {
 }
 
 /** A small pretend GitHub: enough of the sign-in and the git/pull request API to follow what the Worker does. */
-export function fakeGitHub(options: { permissions?: Record<string, boolean>; patchFailures?: number; emptyPull?: boolean } = {}) {
+export function fakeGitHub(options: { permissions?: Record<string, boolean>; patchFailures?: number; emptyPull?: boolean; graphqlFails?: boolean } = {}) {
   const state = {
     refs: { main: 'c0' } as Record<string, string>,
     commits: { c0: { tree: 't0', parents: [] as string[], message: 'start' } } as Record<string, { tree: string; parents: string[]; message: string }>,
     trees: {} as Record<string, { base: string; entries: { path: string; content: string }[] }>,
-    pulls: [] as { number: number; head: string; state: 'open' | 'closed'; merged: boolean }[],
+    pulls: [] as { number: number; head: string; state: 'open' | 'closed'; merged: boolean; draft: boolean; title: string }[],
     calls: [] as Call[],
     revoked: 0,
     patchFailures: options.patchFailures ?? 0,
@@ -75,6 +75,13 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     if (url.pathname === '/user') return reply({ login: 'anna', name: 'Anna Beispiel', avatar_url: 'https://avatars.example/anna' })
     if (url.pathname === '/repos/verein/archiv-data') return reply({ permissions: options.permissions ?? { push: true } })
 
+    if (url.pathname === '/graphql') {
+      if (options.graphqlFails) return reply({ errors: [{ message: 'Resource not accessible' }] })
+      const pull = state.pulls.find((p) => `PR_${p.number}` === body.variables.id)
+      if (pull) pull.draft = false
+      return reply({ data: { markPullRequestReadyForReview: { pullRequest: { number: pull?.number } } } })
+    }
+
     let m: RegExpExecArray | null
     if ((m = /^\/git\/ref\/heads\/(.+)$/.exec(path))) return m[1] in state.refs ? reply({ object: { sha: state.refs[m[1]] } }) : reply({ message: 'Not Found' }, 404)
     if (path === '/git/refs' && method === 'POST') {
@@ -102,17 +109,17 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     }
     if (path === '/pulls' && method === 'GET') {
       const head = url.searchParams.get('head')?.split(':')[1]
-      return reply(state.pulls.filter((p) => p.state === 'open' && p.head === head).map((p) => ({ number: p.number, html_url: `https://github.com/verein/archiv-data/pull/${p.number}` })))
+      return reply(state.pulls.filter((p) => p.state === 'open' && p.head === head).map((p) => ({ number: p.number, node_id: `PR_${p.number}`, draft: p.draft, html_url: `https://github.com/verein/archiv-data/pull/${p.number}` })))
     }
     if (path === '/pulls' && method === 'POST') {
       if (options.emptyPull) return reply({ message: 'Validation Failed' }, 422)
-      const pull = { number: state.next++, head: body.head, state: 'open' as const, merged: false }
+      const pull = { number: state.next++, head: body.head, state: 'open' as const, merged: false, draft: body.draft === true, title: body.title }
       state.pulls.push(pull)
-      return reply({ number: pull.number, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}` }, 201)
+      return reply({ number: pull.number, node_id: `PR_${pull.number}`, draft: pull.draft, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}` }, 201)
     }
     if ((m = /^\/pulls\/(\d+)$/.exec(path))) {
       const pull = state.pulls.find((p) => p.number === Number(m![1]))
-      return pull ? reply({ number: pull.number, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}`, state: pull.state, merged: pull.merged }) : reply({ message: 'Not Found' }, 404)
+      return pull ? reply({ number: pull.number, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}`, state: pull.state, merged: pull.merged, draft: pull.draft }) : reply({ message: 'Not Found' }, 404)
     }
     return reply({ message: `unexpected ${method} ${input}` }, 500)
   })

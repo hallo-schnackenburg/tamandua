@@ -52,12 +52,14 @@ export async function save(
   chat?: ChatMessage[],
   removedObjects: string[] = [],
   ui?: UiState,
+  removedFiles: string[] = [],
 ): Promise<void> {
   const db = await database()
   const transaction = db.transaction([FILES, OBJECTS, CHAT, META], 'readwrite')
   for (const file of files) transaction.objectStore(FILES).put(file)
   for (const object of objects) transaction.objectStore(OBJECTS).put(object)
   for (const id of removedObjects) transaction.objectStore(OBJECTS).delete(id)
+  for (const sha of removedFiles) transaction.objectStore(FILES).delete(sha)
   if (chat) transaction.objectStore(CHAT).put({ id: 'log', messages: chat })
   if (ui) transaction.objectStore(META).put({ id: 'ui', ...ui })
   await done(transaction)

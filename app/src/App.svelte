@@ -33,6 +33,7 @@
   }
 
   let confirming = $state(false)
+  let cleaning = $state(false)
 
   function pick(event: Event) {
     const input = event.currentTarget as HTMLInputElement
@@ -138,7 +139,22 @@
       </section>
 
       <section class="pane">
-        <h2>Objekte</h2>
+        <h2>
+          Objekte
+          {#if ws.merged.length > 0}
+            <span class="clean">
+              {#if cleaning}
+                {ws.merged.length === 1 ? 'Ein übernommenes Objekt' : `${ws.merged.length} übernommene Objekte`} entfernen?
+                <button class="link" onclick={() => { cleaning = false; ws.removeMerged() }}>Ja, entfernen</button>
+                <button class="link" onclick={() => (cleaning = false)}>Abbrechen</button>
+              {:else}
+                <button class="link" title="Nimmt die ins Archiv übernommenen Objekte aus dieser Ansicht. Im Archiv bleiben sie." onclick={() => (cleaning = true)}>
+                  Übernommene entfernen ({ws.merged.length})
+                </button>
+              {/if}
+            </span>
+          {/if}
+        </h2>
         <Objects workspace={ws} />
       </section>
     </div>
@@ -179,6 +195,7 @@
   .welcome p { margin: 0; }
   .button { display: inline-block; padding: 8px 16px; border-radius: 6px; text-decoration: none; }
   .notice { color: #a11; }
+  .clean { margin-left: auto; font-size: 0.8rem; font-weight: 400; color: #777; display: inline-flex; align-items: center; gap: 6px; }
   .quiet { color: #888; font-size: 0.9rem; }
   .panes { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1.6fr); /* minmax(0, …): long YAML lines must not widen the pane */ gap: 12px; min-height: 0; }
   /* The hint of an empty pane: centered below the heading, on the same height in every pane. */

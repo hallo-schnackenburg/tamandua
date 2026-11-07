@@ -1,7 +1,8 @@
 // Saving to the data repository, for the person who is signed in:
 //
-//   POST /repo/save        {objects: [{id, text}]}  one commit on the person's branch
-//   POST /repo/submit      opens the pull request of that branch (or finds the open one)
+//   POST /repo/save        {objects: [{id, text}]}  one commit on the person's branch; the first one also
+//                          opens the branch's pull request as a draft
+//   POST /repo/submit      asks for a review: marks the draft ready (or opens the pull request)
 //   GET  /repo/pull/<n>    state of a pull request: open, closed, merged
 //
 // The app checks every object against the schema before it sends it. The Worker cannot (the schema
@@ -14,6 +15,14 @@ import type { Session } from './session.js'
 
 const MAX_OBJECTS = 50
 const MAX_OBJECT_BYTES = 200_000
+
+/** "Erfassung von Anna (07.11.2026, 23:47)": when the pull request was opened, in the time of the archive. */
+export function titleOf(name: string, now = new Date()): string {
+  const zone = { timeZone: 'Europe/Berlin' } as const
+  const date = now.toLocaleDateString('de-DE', { ...zone, day: '2-digit', month: '2-digit', year: 'numeric' })
+  const time = now.toLocaleTimeString('de-DE', { ...zone, hour: '2-digit', minute: '2-digit' })
+  return `Erfassung von ${name} (${date}, ${time})`
+}
 
 export const branchOf = (login: string): string => `erfassung/${login.replace(/[^A-Za-z0-9-]/g, '-')}`
 
@@ -70,12 +79,16 @@ export async function handleRepo(request: Request, route: string, session: Sessi
       if ('error' in parsed) return json({ error: parsed.error }, parsed.status)
       const n = parsed.files.length
       const commit = await repo.save(branch, parsed.files, `Erfassung: ${n} ${n === 1 ? 'Objekt' : 'Objekte'}`)
-      return json({ commit, saved: n })
+      // The pull request is a convenience: if it cannot be opened now, the save still counts.
+      const pull = await repo.draft(branch, titleOf(session.name), `Erfasst über Tamandua von ${session.login}.`).catch((error) => {
+        console.error('Could not open the pull request', error)
+        return undefined
+      })
+      return json({ commit, saved: n, pull })
     }
 
     if (route === '/repo/submit' && request.method === 'POST') {
-      const date = new Date().toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin' })
-      const pull = await repo.submit(branch, `Erfassung von ${session.name} (${date})`, `Eingereicht über Tamandua von ${session.login}.`)
+      const pull = await repo.submit(branch, titleOf(session.name), `Erfasst über Tamandua von ${session.login}.`)
       return json(pull)
     }
 

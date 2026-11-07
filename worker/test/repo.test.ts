@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { handle, type Env } from '../src/index.js'
+import { titleOf } from '../src/repo.js'
 import { authEnv, cookieOf, fakeGitHub } from './support.js'
 
 const env: Env = { ...authEnv }
@@ -71,19 +72,52 @@ describe('POST /repo/save', () => {
   })
 })
 
-describe('POST /repo/submit and GET /repo/pull', () => {
-  it('opens a pull request from the branch and returns the open one the second time', async () => {
+describe('the pull request as a draft', () => {
+  it('opens a draft with the first save and reuses it afterwards', async () => {
     const gh = fakeGitHub()
-    await handle(post('/repo/save', objects(ID_A)), env, gh.fn)
-    const first = (await (await handle(post('/repo/submit'), env, gh.fn)).json()) as { number: number; url: string }
-    expect(first.url).toBe(`https://github.com/verein/archiv-data/pull/${first.number}`)
+    const first = (await (await handle(post('/repo/save', objects(ID_A)), env, gh.fn)).json()) as { pull: { number: number; url: string; draft: boolean } }
+    expect(first.pull.draft).toBe(true)
+    expect(first.pull.url).toBe(`https://github.com/verein/archiv-data/pull/${first.pull.number}`)
     const created = gh.state.calls.find((c) => c.method === 'POST' && c.url.endsWith('/pulls'))!
-    expect(created.body).toMatchObject({ head: 'erfassung/anna', base: 'main' })
-    expect(created.body.title).toContain('Anna Beispiel')
+    expect(created.body).toMatchObject({ head: 'erfassung/anna', base: 'main', draft: true })
+    expect(created.body.title).toMatch(/^Erfassung von Anna Beispiel \(\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}\)$/)
 
-    const second = (await (await handle(post('/repo/submit'), env, gh.fn)).json()) as { number: number }
-    expect(second.number).toBe(first.number)
+    const second = (await (await handle(post('/repo/save', objects(ID_B)), env, gh.fn)).json()) as { pull: { number: number } }
+    expect(second.pull.number).toBe(first.pull.number)
     expect(gh.state.pulls).toHaveLength(1)
+  })
+
+  it('still saves when the pull request cannot be opened', async () => {
+    const response = await handle(post('/repo/save', objects(ID_A)), env, fakeGitHub({ emptyPull: true }).fn)
+    expect(response.status).toBe(200)
+    expect(((await response.json()) as { pull?: unknown }).pull).toBeUndefined()
+  })
+
+  it('gives the title the time in Berlin', () => {
+    expect(titleOf('Anna', new Date('2026-11-07T22:47:00Z'))).toBe('Erfassung von Anna (07.11.2026, 23:47)')
+    expect(titleOf('Anna', new Date('2026-07-01T10:05:00Z'))).toBe('Erfassung von Anna (01.07.2026, 12:05)')
+  })
+})
+
+describe('POST /repo/submit and GET /repo/pull', () => {
+  it('marks the draft ready for review', async () => {
+    const gh = fakeGitHub()
+    const saved = (await (await handle(post('/repo/save', objects(ID_A)), env, gh.fn)).json()) as { pull: { number: number } }
+    const submitted = (await (await handle(post('/repo/submit'), env, gh.fn)).json()) as { number: number; draft: boolean }
+    expect(submitted).toMatchObject({ number: saved.pull.number, draft: false })
+    expect(gh.state.pulls[0].draft).toBe(false)
+    expect(gh.state.pulls).toHaveLength(1)
+    // Submitting again changes nothing.
+    const again = (await (await handle(post('/repo/submit'), env, gh.fn)).json()) as { number: number; draft: boolean }
+    expect(again).toMatchObject({ number: saved.pull.number, draft: false })
+  })
+
+  it('opens the pull request if the save could not', async () => {
+    const gh = fakeGitHub()
+    gh.state.refs['erfassung/anna'] = 'c0'
+    const response = await handle(post('/repo/submit'), env, gh.fn)
+    expect(response.status).toBe(200)
+    expect(gh.state.pulls[0].draft).toBe(false)
   })
 
   it('says there is nothing to submit when the branch has nothing new', async () => {
@@ -91,16 +125,22 @@ describe('POST /repo/submit and GET /repo/pull', () => {
     expect(response.status).toBe(409)
   })
 
-  it('reports whether a pull request was merged', async () => {
-    const gh = fakeGitHub()
+  it('reports a failure of GitHub when the draft cannot be marked ready', async () => {
+    const gh = fakeGitHub({ graphqlFails: true })
     await handle(post('/repo/save', objects(ID_A)), env, gh.fn)
-    const { number } = (await (await handle(post('/repo/submit'), env, gh.fn)).json()) as { number: number }
-    const open = await handle(new Request(`http://worker/api/repo/pull/${number}`, { headers: { cookie } }), env, gh.fn)
-    expect(await open.json()).toMatchObject({ state: 'open', merged: false })
+    expect((await handle(post('/repo/submit'), env, gh.fn)).status).toBe(502)
+  })
+
+  it('reports whether a pull request is a draft, open or merged', async () => {
+    const gh = fakeGitHub()
+    const { pull } = (await (await handle(post('/repo/save', objects(ID_A)), env, gh.fn)).json()) as { pull: { number: number } }
+    const get = async () => (await handle(new Request(`http://worker/api/repo/pull/${pull.number}`, { headers: { cookie } }), env, gh.fn)).json()
+    expect(await get()).toMatchObject({ state: 'open', merged: false, draft: true })
+    await handle(post('/repo/submit'), env, gh.fn)
+    expect(await get()).toMatchObject({ state: 'open', merged: false, draft: false })
     gh.state.pulls[0].state = 'closed'
     gh.state.pulls[0].merged = true
-    const done = await handle(new Request(`http://worker/api/repo/pull/${number}`, { headers: { cookie } }), env, gh.fn)
-    expect(await done.json()).toMatchObject({ state: 'closed', merged: true })
+    expect(await get()).toMatchObject({ state: 'closed', merged: true })
   })
 
   it('only takes numbers as the pull request', async () => {
