@@ -119,6 +119,13 @@ describe('files and variants', () => {
   })
 })
 
+describe('holder and owner', () => {
+  it('are entities with a name', () => {
+    expect(messages(photo(), (o) => (o.holder = { name: 'Stadtarchiv', type: 'business' }))).toEqual([])
+    expect(messages(photo(), (o) => (o.owner = { type: 'person' }))).toContain('/owner: missing field "name"')
+  })
+})
+
 describe('origin and subjects', () => {
   it('need a name', () => {
     expect(messages(photo(), (o) => delete o.origin.name)).toContain('/origin: missing field "name"')

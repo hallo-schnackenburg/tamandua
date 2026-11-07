@@ -49,6 +49,14 @@
           "description": "Who made the object and where: the photographer and the place of a photo, the sender and the place of a letter, the company and its seat on a brochure. Not where it was found.",
           "$ref": "#/$defs/entity"
         },
+        "holder": {
+          "description": "Who has the original now and where: the town archive, a family, a collector, a gallery. Possession, not ownership.",
+          "$ref": "#/$defs/entity"
+        },
+        "owner": {
+          "description": "Who the original belongs to, e.g. when that differs from the holder (loan, deposit).",
+          "$ref": "#/$defs/entity"
+        },
         "subjects": {
           "description": "The things the object shows or mentions: people, places, buildings, businesses, events, things.",
           "type": "array",

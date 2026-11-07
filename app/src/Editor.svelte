@@ -58,8 +58,9 @@
   /* The editor grows with the text, up to a maximum; longer text scrolls inside. */
   .editor { background: white; }
   .editor :global(.cm-editor) { max-height: 34rem; }
-  /* No line numbers, fold markers or lint markers for now; the text starts at the left edge. */
+  /* No line numbers, fold markers or lint markers for now; the text lines up with the title above. */
   .editor :global(.cm-gutters) { display: none; }
-  .editor :global(.cm-line) { padding-left: 0; }
+  .editor :global(.cm-line) { padding-left: 10px; }
+  .editor :global(.cm-editor.cm-focused) { outline: none; }
   .editor :global(.cm-scroller) { overflow: auto; }
 </style>

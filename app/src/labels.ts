@@ -18,6 +18,8 @@ export const FIELD_NAMES: Record<string, string> = {
   date: 'Datum',
   subtype: 'Untertyp',
   origin: 'Herkunft',
+  holder: 'Aufbewahrung',
+  owner: 'Eigentümer',
   subjects: 'Bezüge',
   recipient: 'Empfänger',
   location: 'Ort',

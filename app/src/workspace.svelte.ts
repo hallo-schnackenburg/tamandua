@@ -65,8 +65,12 @@ interface Batch {
   message: ChatMessage
   /** The files of this drop that exist now; they get selected when the drop is done. */
   shas: string[]
-  /** True once the user has been told how the drop went. */
-  told?: boolean
+  /** Files that are hashed (or could not be read). */
+  processed: number
+  /** Files that could not be read at all. */
+  unreadable: string[]
+  listedTold?: boolean
+  doneTold?: boolean
   /** Files dropped onto an object also go into it. */
   objectId?: string
 }
@@ -142,6 +146,7 @@ export class Workspace {
   #dirtyObjects = new Set<string>()
   #removedObjects = new Set<string>()
   #dirtyChat = false
+  #dirtyUi = false
   #timer: ReturnType<typeof setTimeout> | undefined
 
   constructor(store: FileStore, agent: Agent) {
@@ -162,7 +167,7 @@ export class Workspace {
 
   async load() {
     try {
-      const [files, objects, chat] = await Promise.all([db.loadFiles(), db.loadObjects(), db.loadChat()])
+      const [files, objects, chat, ui] = await Promise.all([db.loadFiles(), db.loadObjects(), db.loadChat(), db.loadUi()])
       this.chat = chat
       for (const file of files) {
         if (file.status === 'uploading') {
@@ -174,6 +179,13 @@ export class Workspace {
       }
       this.files = files.sort((a, b) => a.addedAt - b.addedAt)
       this.objects = objects
+      if (ui) {
+        // Selection and open object as the user left them, as far as the files still exist.
+        const known = new Set(files.map((f) => f.sha256))
+        this.selection = ui.selection.filter((sha) => known.has(sha))
+        this.active = ui.active && known.has(ui.active) ? ui.active : undefined
+        this.#anchor = this.selection[0]
+      }
       this.#schedule()
     } catch {
       this.saveState = 'failed'
@@ -187,7 +199,7 @@ export class Workspace {
     const files = [...list].sort(byName) // scans are usually numbered: natural order by name
     if (files.length === 0) return
     const message = this.#say('log', '')
-    const batch: Batch = { total: files.length, uploaded: 0, conflicts: [], failed: [], duplicates: [], message, objectId, shas: [] }
+    const batch: Batch = { total: files.length, uploaded: 0, conflicts: [], failed: [], duplicates: [], message, objectId, shas: [], processed: 0, unreadable: [] }
     this.#report(batch)
     this.#queue.push(...files.map((file) => ({ file, batch })))
     void this.#run()
@@ -204,23 +216,27 @@ export class Workspace {
     if (done < batch.total) parts.push(`${batch.total - done} in Arbeit`)
     batch.message.text = `${batch.total} ${batch.total === 1 ? 'Datei' : 'Dateien'} abgelegt: ${parts.join(', ')}`
     this.#markChat()
-    if (done === batch.total && !batch.told) this.#conclude(batch)
+    if (batch.processed === batch.total && !batch.listedTold) this.#listed(batch)
+    if (done === batch.total && !batch.doneTold) this.#uploaded(batch)
   }
 
-  /** When the last file of a drop is done, tell the user how it went and ask what comes next. */
-  #conclude(batch: Batch) {
-    batch.told = true
+  /**
+   * Once every file of a drop is hashed (it is listed, selectable and has its `files` entry),
+   * the user can start describing it; the uploads go on in the background.
+   */
+  #listed(batch: Batch) {
+    batch.listedTold = true
     const sentences: string[] = []
-    if (batch.uploaded && !batch.objectId) {
-      sentences.push(`Du hast ${batch.uploaded === 1 ? 'eine Datei' : `${batch.uploaded} Dateien`} hochgeladen.`)
+    const fresh = batch.shas.length - batch.duplicates.length
+    if (fresh > 0 && !batch.objectId) {
+      sentences.push(`Du hast ${fresh === 1 ? 'eine Datei' : `${fresh} Dateien`} abgelegt, ${fresh === 1 ? 'sie wird' : 'sie werden'} gerade hochgeladen.`)
     }
     if (batch.duplicates.length) {
       const one = batch.duplicates.length === 1
       sentences.push(one ? `Die Datei „${batch.duplicates[0]}“ war schon vorhanden.` : `${batch.duplicates.length} Dateien waren schon vorhanden.`)
     }
-    if (batch.conflicts.length) sentences.push(`Bei ${them(batch.conflicts)} gab es einen Konflikt ${names(batch.conflicts)}.`)
-    if (batch.failed.length) sentences.push(`${them(batch.failed)} ${batch.failed.length === 1 ? 'konnte' : 'konnten'} nicht verarbeitet werden ${names(batch.failed)}.`)
-    if (batch.uploaded && !batch.objectId) sentences.push(`Möchtest du sie jetzt beschreiben?`)
+    if (batch.unreadable.length) sentences.push(`${them(batch.unreadable)} ${batch.unreadable.length === 1 ? 'konnte' : 'konnten'} nicht gelesen werden ${names(batch.unreadable)}.`)
+    if (fresh > 0 && !batch.objectId) sentences.push('Möchtest du sie jetzt beschreiben?')
     if (sentences.length) this.#say('assistant', sentences.join(' '))
     if (!batch.objectId && batch.shas.length > 0) {
       // Dropping is a deliberate act: the dropped files become the selection, whatever was selected before.
@@ -228,8 +244,19 @@ export class Workspace {
       this.selection = [...batch.shas]
       this.#anchor = batch.shas[0]
       this.active = batch.shas[0]
+      this.#markUi()
       this.focusTick++
     }
+  }
+
+  /** When the last upload of a drop is done: only problems are worth a message. */
+  #uploaded(batch: Batch) {
+    batch.doneTold = true
+    const failed = batch.failed.filter((name) => !batch.unreadable.includes(name))
+    const sentences: string[] = []
+    if (batch.conflicts.length) sentences.push(`Beim Hochladen gab es bei ${them(batch.conflicts)} einen Konflikt ${names(batch.conflicts)}.`)
+    if (failed.length) sentences.push(`${them(failed)} ${failed.length === 1 ? 'konnte' : 'konnten'} nicht hochgeladen werden ${names(failed)}.`)
+    if (sentences.length) this.#say('assistant', sentences.join(' '))
   }
 
   async #run() {
@@ -265,7 +292,9 @@ export class Workspace {
       item.state = 'error'
       item.message = (error as Error).message
       batch.failed.push(file.name)
+      batch.unreadable.push(file.name)
     }
+    batch.processed++
     this.#report(batch)
   }
 
@@ -311,6 +340,7 @@ export class Workspace {
       this.#anchor = sha256
     }
     this.active = sha256
+    this.#markUi()
     this.focusTick++ // typing goes to the chat from here on
   }
 
@@ -322,12 +352,14 @@ export class Workspace {
     this.picked = false // the object's files are selected, but dragging one tile moves only that one
     this.#anchor = files[0].sha256
     this.active = files[0].sha256
+    this.#markUi()
     this.focusTick++
   }
 
   /** Closes the open object. The selection stays. */
   collapse() {
     this.active = undefined
+    this.#markUi()
   }
 
   // --- rearranging: files go into an object, or come out of it ---
@@ -425,6 +457,7 @@ export class Workspace {
       this.selection = freed.map((f) => f.sha256)
       this.#anchor = freed[0].sha256
       this.active = freed[0].sha256
+      this.#markUi()
     }
   }
 
@@ -622,6 +655,7 @@ export class Workspace {
     this.active = files[0].sha256
     this.selection = files.map((f) => f.sha256)
     this.#anchor = files[0].sha256
+    this.#markUi()
   }
 
   /** The user changed the text in the editor. */
@@ -637,6 +671,11 @@ export class Workspace {
 
   #mark(sha256: string) {
     this.#dirtyFiles.add(sha256)
+    this.#schedule()
+  }
+
+  #markUi() {
+    this.#dirtyUi = true
     this.#schedule()
   }
 
@@ -665,13 +704,18 @@ export class Workspace {
     this.#removedObjects.clear()
     const chat = this.#dirtyChat
     this.#dirtyChat = false
-    if (files.length === 0 && objects.length === 0 && removed.length === 0 && !chat) return
+    const ui = this.#dirtyUi
+    this.#dirtyUi = false
+    if (files.length === 0 && objects.length === 0 && removed.length === 0 && !chat && !ui) return
 
     this.saveState = 'saving'
     try {
       // A plain copy is needed: reactive objects cannot be stored. Progress is not kept.
       const plainFiles = files.map((f) => ({ ...$state.snapshot(f), progress: undefined }))
-      await db.save(plainFiles, objects.map((o) => $state.snapshot(o)), chat ? $state.snapshot(this.chat.slice(-200)) : undefined, removed)
+      await db.save(plainFiles, objects.map((o) => $state.snapshot(o)), chat ? $state.snapshot(this.chat.slice(-200)) : undefined,
+        removed,
+        ui ? { selection: $state.snapshot(this.selection), active: this.active } : undefined,
+      )
       this.saveState = 'saved'
     } catch {
       this.saveState = 'failed'

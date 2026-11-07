@@ -157,13 +157,6 @@
       <input type="file" multiple onchange={onpick} />
     </label>
   {:else}
-    <div class="toolbar">
-      <label class="more">
-        + Dateien
-        <input type="file" multiple onchange={onpick} />
-      </label>
-    </div>
-
     <div class="grid">
       {#each ws.files as file (file.sha256)}
         {@const object = file.objectId ? objectsById.get(file.objectId) : undefined}
@@ -235,8 +228,6 @@
   .hint { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 2px dashed #bbb; border-radius: 6px; color: #666; cursor: pointer; text-align: center; }
   .hint small { color: #999; }
   input[type='file'] { display: none; }
-  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 0.9rem; }
-  .more { color: #36c; cursor: pointer; }
   .close { border: 0; background: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 2px; }
   :global(main .pane.drop::after) { content: ''; position: absolute; inset: 0; border-radius: 6px; background: rgba(157, 188, 247, 0.5); pointer-events: none; }
   .overlay { position: absolute; z-index: 2; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 0.5rem 1rem; border-radius: 999px; background: rgba(255, 255, 255, 0.92); color: #36c; font-weight: 600; pointer-events: none; }
