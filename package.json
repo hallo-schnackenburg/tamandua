@@ -10,6 +10,7 @@
   "scripts": {
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "generate": "npm run generate --workspace core",
     "dev": "npm run dev --workspace app",
     "dev:worker": "npm run dev --workspace worker",
     "build": "npm run build --workspace app"

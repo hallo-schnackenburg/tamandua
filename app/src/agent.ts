@@ -4,7 +4,7 @@
 // anything itself. FakeAgent stands in until the real one (a model behind the
 // Worker) exists; it returns the same kind of calls, so everything behind it is real.
 
-import { readField } from '@archive/core'
+import { readValue, type ObjectType } from '@archive/core'
 
 export interface AgentFile {
   sha256: string
@@ -32,10 +32,10 @@ export interface AgentRequest {
 }
 
 export type ToolCall =
-  /** Makes objects out of the files that have none yet. A photo is always one object per file. */
+  /** Makes objects out of the files that have none yet. An image is always one object per file. */
   | {
       tool: 'create_object'
-      type: 'photo' | 'document'
+      type: ObjectType
       subtype?: string
       /** Documents: all files are pages of one object (default); false: one object per file. */
       together?: boolean
@@ -56,7 +56,9 @@ const FIELDS: Record<string, string> = {
   titel: 'title',
   datum: 'date',
   ort: 'location',
-  autor: 'author',
+  autor: 'origin',
+  urheber: 'origin',
+  fotograf: 'origin',
   empfänger: 'recipient',
   beschreibung: 'description',
   notizen: 'notes',
@@ -84,7 +86,10 @@ export class FakeAgent implements Agent {
     await new Promise((resolve) => setTimeout(resolve, 150))
 
     const fields: Record<string, unknown> = {}
-    for (const match of message.matchAll(PAIR)) fields[FIELDS[match[1].toLowerCase()]] = strip(match[2])
+    for (const match of message.matchAll(PAIR)) {
+      const field = FIELDS[match[1].toLowerCase()]
+      fields[field] = field === 'origin' ? { name: strip(match[2]) } : strip(match[2])
+    }
     if (!fields.date) {
       const date = findDate(message.replace(PAIR, ''))
       if (date) fields.date = date
@@ -100,7 +105,7 @@ export class FakeAgent implements Agent {
           object: object.number,
           field,
           value,
-          old: readField(object.text, field),
+          old: readValue(object.text, field),
         })),
       )
 
@@ -111,17 +116,18 @@ export class FakeAgent implements Agent {
       return patch(selected)
     }
 
-    if (has(/\b(fotos?|bilder?)\b/)) return [{ tool: 'create_object', type: 'photo', fields }]
-    const documents: [RegExp, RegExp, string][] = [
+    if (has(/\b(fotos?|bilder?)\b/)) return [{ tool: 'create_object', type: 'image', subtype: 'photo', fields }]
+    if (has(/\bzeichnung(en)?\b/)) return [{ tool: 'create_object', type: 'image', subtype: 'drawing', fields }]
+    const documents: [RegExp, RegExp, string | undefined][] = [
       [/\bbrief\b/, /\bbriefe\b/, 'letter'],
       [/\bprotokoll\b/, /\bprotokolle\b/, 'protocol'],
       [/\bnotiz\b/, /\bnotizen\b/, 'note'],
-      [/\bdokument\b/, /\bdokumente\b/, 'other'],
+      [/\bdokument\b/, /\bdokumente\b/, undefined],
     ]
     for (const [one, many, subtype] of documents) {
       if (has(many)) return [{ tool: 'create_object', type: 'document', subtype, together: false, fields }]
       if (has(one)) return [{ tool: 'create_object', type: 'document', subtype, together: true, fields }]
     }
-    return [{ tool: 'say', text: 'Soll das ein Foto oder ein Dokument (Brief, Protokoll, Notiz) sein?' }]
+    return [{ tool: 'say', text: 'Soll das ein Bild oder ein Dokument (Brief, Protokoll, Notiz) sein?' }]
   }
 }

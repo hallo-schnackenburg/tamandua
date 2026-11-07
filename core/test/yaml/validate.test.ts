@@ -6,7 +6,7 @@ import { stringify } from 'yaml'
 describe('validateObjectYaml', () => {
   const yaml = (extra: string): string => `
 id: 01JC8Z3Q7M5K2V9X4T6R1B0N8D
-type: photo
+type: image
 title: Schützenumzug
 ${extra}
 files:

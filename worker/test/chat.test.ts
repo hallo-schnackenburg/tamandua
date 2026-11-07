@@ -31,6 +31,14 @@ describe('parseChatRequest', () => {
 })
 
 describe('buildModelRequest', () => {
+  it('takes the types from archive.yaml', () => {
+    const built = buildModelRequest(request(), 'm')
+    const create = built.tools.find((tool) => tool.name === 'create_object') as any
+    expect(create.input_schema.properties.type.enum).toEqual(['image', 'document'])
+    expect(create.input_schema.properties.subtype.enum).toContain('photo')
+    expect(built.system).toContain('building')
+  })
+
   it('forces a tool call and offers the three tools', () => {
     const built = buildModelRequest(request(), 'claude-haiku-5-5')
     expect(built.model).toBe('claude-haiku-5-5')
@@ -83,16 +91,27 @@ describe('toToolCalls', () => {
     expect(
       toToolCalls(
         answer(
-          { type: 'tool_use', name: 'create_object', input: { type: 'document', subtype: 'letter', together: true, fields: { author: 'Volker H.' } } },
+          { type: 'tool_use', name: 'create_object', input: { type: 'document', subtype: 'letter', together: true, fields: { origin: { name: 'Volker H.' } } } },
           { type: 'tool_use', name: 'patch', input: { object: 3, field: 'title', value: 'X', old: 'Y' } },
           { type: 'tool_use', name: 'say', input: { text: 'Hallo' } },
         ),
       ),
     ).toEqual([
-      { tool: 'create_object', type: 'document', subtype: 'letter', together: true, fields: { author: 'Volker H.' } },
+      { tool: 'create_object', type: 'document', subtype: 'letter', together: true, fields: { origin: { name: 'Volker H.' } } },
       { tool: 'patch', object: 3, field: 'title', value: 'X', old: 'Y' },
       { tool: 'say', text: 'Hallo' },
     ])
+  })
+
+  it('leaves out a subtype that does not belong to the type', () => {
+    const calls = toToolCalls(answer({ type: 'tool_use', name: 'create_object', input: { type: 'image', subtype: 'letter' } }))
+    expect(calls).toEqual([{ tool: 'create_object', type: 'image', subtype: undefined, together: undefined, fields: undefined }])
+  })
+
+  it('passes objects and lists of objects as values', () => {
+    const value = [{ name: 'Haus', type: 'building' }]
+    const calls = toToolCalls(answer({ type: 'tool_use', name: 'patch', input: { object: 1, field: 'subjects', value, old: [] } }))
+    expect(calls).toEqual([{ tool: 'patch', object: 1, field: 'subjects', value, old: [] }])
   })
 
   it('turns plain text into a say call', () => {

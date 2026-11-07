@@ -2,15 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/schema/object.schema.json",
   "title": "Archive object",
-  "description": "Metadata of one archive object (a photo, a document, ...). One YAML file per object. Files (scans, videos, OCR text, ...) live in the object store and are described in YAML files.",
+  "description": "Metadata of one archive object (an image, a document, ...). One YAML file per object. Files (scans, videos, OCR text, ...) live in the object store and are described in YAML files.",
   "type": "object",
   "required": ["id", "type", "title", "files"],
 
   "allOf": [
     { "$ref": "#/$defs/common" },
     {
-      "if": { "properties": { "type": { "const": "photo" } }, "required": ["type"] },
-      "then": { "$ref": "#/$defs/photo" }
+      "if": { "properties": { "type": { "const": "image" } }, "required": ["type"] },
+      "then": { "$ref": "#/$defs/image" }
     },
     {
       "if": { "properties": { "type": { "const": "document" } }, "required": ["type"] },
@@ -30,10 +30,10 @@
         },
         "type": {
           "description": "Object type. Decides which further fields and which files are allowed.",
-          "enum": ["photo", "document"]
+          "enum": ["image", "document"]
         },
         "subtype": {
-          "description": "Optional refinement of the type. The allowed values depend on the type.",
+          "description": "Optional refinement of the type, e.g. photo or letter. The values are listed in archive.yaml.",
           "type": "string",
           "minLength": 1
         },
@@ -41,15 +41,18 @@
         "description": { "type": "string" },
         "date": { "$ref": "#/$defs/edtf_date" },
         "location": {
-          "description": "Place as free text, for humans.",
+          "description": "The place the object relates to for the archive, as free text: where a photo was taken, where something shown stands. This is the place on the map.",
           "type": "string"
         },
         "geocode": { "$ref": "#/$defs/geocode" },
-        "people": {
-          "description": "Names of depicted or mentioned people, as free text.",
+        "origin": {
+          "description": "Who made the object and where: the photographer and the place of a photo, the sender and the place of a letter, the company and its seat on a brochure. Not where it was found.",
+          "$ref": "#/$defs/entity"
+        },
+        "subjects": {
+          "description": "The things the object shows or mentions: people, places, buildings, businesses, events, things.",
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
+          "items": { "$ref": "#/$defs/entity" }
         },
         "notes": {
           "description": "Internal notes of the person capturing the object.",
@@ -59,9 +62,22 @@
       }
     },
 
-    "photo": {
+    "entity": {
+      "description": "A person, place, building, business, event or thing. The values of type are listed in archive.yaml.",
+      "type": "object",
+      "required": ["name"],
       "properties": {
-        "photographer": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "note": { "type": "string" },
+        "location": { "description": "Place as free text.", "type": "string" },
+        "geocode": { "$ref": "#/$defs/geocode" }
+      },
+      "additionalProperties": false
+    },
+
+    "image": {
+      "properties": {
         "files": {
           "description": "Exactly one file with the role 'main'.",
           "type": "array",
@@ -79,11 +95,6 @@
 
     "document": {
       "properties": {
-        "subtype": {
-          "description": "Kind of document.",
-          "enum": ["letter", "protocol", "note", "other"]
-        },
-        "author": { "type": "string" },
         "recipient": { "type": "string" },
         "language": {
           "description": "ISO 639-1 code, e.g. 'de'.",
@@ -104,8 +115,7 @@
             ]
           }
         }
-      },
-      "required": ["subtype"]
+      }
     },
 
     "file": {

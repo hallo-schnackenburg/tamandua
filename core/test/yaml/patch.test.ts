@@ -13,19 +13,19 @@ title: Test   # keep me
 ${extra}`
 
 describe('addFile', () => {
-  it('adds the main file to a photo and leaves the rest alone', () => {
-    const out = addFile(base('photo'), entry)
+  it('adds the main file to an image and leaves the rest alone', () => {
+    const out = addFile(base('image'), entry)
     expect(out).toContain('# my note')
     expect(out).toContain('title: Test # keep me')
     expect(parse(out).files).toEqual([{ role: 'main', ...entry }])
   })
 
-  it('gives a valid photo', () => {
-    expect(validateObjectYaml(addFile(base('photo'), entry))).toEqual([])
+  it('gives a valid image', () => {
+    expect(validateObjectYaml(addFile(base('image'), entry))).toEqual([])
   })
 
-  it('refuses a second file for a photo', () => {
-    const once = addFile(base('photo'), entry)
+  it('refuses a second file for an image', () => {
+    const once = addFile(base('image'), entry)
     const { role: _r, ...other } = file('x', 'b')
     expect(() => addFile(once, other)).toThrow(/exactly one file/)
   })
@@ -56,7 +56,7 @@ describe('addFile', () => {
 
   it('keeps a hash made only of digits a string', () => {
     const digits = '1'.repeat(64)
-    const text = addFile(base('photo'), { ...entry, sha256: digits })
+    const text = addFile(base('image'), { ...entry, sha256: digits })
     expect(parse(text).files[0].sha256).toBe(digits)
     expect(sha('a')).toHaveLength(64)
   })
@@ -84,9 +84,9 @@ files:
   })
 
   it('places a new field before files', () => {
-    const out = ok(setField(text, 'author', 'Volker H.', undefined))
-    expect(out.indexOf('author:')).toBeLessThan(out.indexOf('files:'))
-    expect(parse(out).author).toBe('Volker H.')
+    const out = ok(setField(text, 'recipient', 'Volker H.', undefined))
+    expect(out.indexOf('recipient:')).toBeLessThan(out.indexOf('files:'))
+    expect(parse(out).recipient).toBe('Volker H.')
   })
 
   it('always writes a date in quotes', () => {
@@ -117,7 +117,22 @@ files:
   })
 
   it('takes lists', () => {
-    expect(parse(ok(setField(text, 'people', ['A', 'B'], undefined))).people).toEqual(['A', 'B'])
+    expect(parse(ok(setField(text, 'notes', ['A', 'B'], undefined))).notes).toEqual(['A', 'B'])
+  })
+
+  it('takes an object and writes it as a block', () => {
+    const out = ok(setField(text, 'origin', { name: 'Max Ketterer', type: 'business', location: 'Leipzig' }, undefined))
+    expect(parse(out).origin).toEqual({ name: 'Max Ketterer', type: 'business', location: 'Leipzig' })
+    expect(out).toContain('origin:\n  name: Max Ketterer')
+    expect(out.indexOf('origin:')).toBeLessThan(out.indexOf('files:'))
+  })
+
+  it('takes a list of objects and compares them with the old value', () => {
+    const one = [{ name: 'Haus', type: 'building' }]
+    const edited = ok(setField(text, 'subjects', one, undefined))
+    expect(setField(edited, 'subjects', [], undefined)).toEqual({ ok: false, current: one })
+    const two = [...one, { name: 'Konditorei', type: 'business' }]
+    expect(parse(ok(setField(edited, 'subjects', two, one))).subjects).toEqual(two)
   })
 
   it('does not touch id, type and files', () => {

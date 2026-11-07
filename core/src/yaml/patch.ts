@@ -7,7 +7,7 @@ import { Scalar, isMap, isSeq, parseDocument } from 'yaml'
 export type FileEntry = Record<string, unknown>
 
 /**
- * Adds a file to `files`. A photo has exactly one file (role "main"); a document
+ * Adds a file to `files`. An image has exactly one file (role "main"); a document
  * takes pages (role "page") with the next free `seq`. Throws an Error with a
  * message for the user if the file cannot be added.
  */
@@ -17,8 +17,8 @@ export function addFile(text: string, entry: FileEntry): string {
     throw new Error('The YAML has a syntax error; fix it first.')
   }
   const type = doc.get('type')
-  if (type !== 'photo' && type !== 'document') {
-    throw new Error('Set the type (photo or document) before adding files.')
+  if (type !== 'image' && type !== 'document') {
+    throw new Error('Set the type (image or document) before adding files.')
   }
 
   const existing = doc.get('files')
@@ -28,8 +28,8 @@ export function addFile(text: string, entry: FileEntry): string {
   }
 
   let full: FileEntry
-  if (type === 'photo') {
-    if (items.length > 0) throw new Error('A photo has exactly one file.')
+  if (type === 'image') {
+    if (items.length > 0) throw new Error('An image has exactly one file.')
     full = { role: 'main', ...entry }
   } else {
     const seqs = items.map((f) => Number((f as FileEntry)?.seq)).filter(Number.isFinite)

@@ -12,11 +12,11 @@ const modelAnswer = (content: unknown[], status = 200) => vi.fn(async () => new 
 
 describe('POST /chat', () => {
   it('asks the model with the key and returns the tool calls', async () => {
-    const fake = modelAnswer([{ type: 'tool_use', name: 'create_object', input: { type: 'photo' } }])
+    const fake = modelAnswer([{ type: 'tool_use', name: 'create_object', input: { type: 'image' } }])
     const response = await handle(post(body), env, asFetch(fake))
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ calls: [{ tool: 'create_object', type: 'photo' }] })
+    expect(await response.json()).toEqual({ calls: [{ tool: 'create_object', type: 'image' }] })
     expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:5173')
 
     const [url, init] = fake.mock.calls[0] as unknown as [string, RequestInit]

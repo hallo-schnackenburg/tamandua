@@ -36,12 +36,17 @@ export function preview(originalChar: string, c: string): Obj {
 export function photo(): Obj {
   return {
     id: '01JC8Z3Q7M5K2V9X4T6R1B0N8D',
-    type: 'photo',
+    type: 'image',
+    subtype: 'photo',
     title: 'Schützenumzug am Marktplatz',
     date: '1963-07',
     location: 'Schnackenburg, Marktplatz',
     geocode: { lat: 52.9928, lon: 11.5689, precision: 'street' },
-    people: ['Heinrich Meyer', 'Erna Schulz'],
+    origin: { name: 'Karl Lemke', type: 'person', location: 'Schnackenburg' },
+    subjects: [
+      { name: 'Heinrich Meyer', type: 'person' },
+      { name: 'Konditorei Müller', type: 'business', note: 'am Markt' },
+    ],
     files: [file('main', 'a', { variants: [preview('a', 'b')] })],
   }
 }

@@ -60,10 +60,19 @@ interface Batch {
   message: ChatMessage
 }
 
-const SUBTYPES: Record<string, string> = { letter: 'Brief', protocol: 'Protokoll', note: 'Notiz', other: 'Dokument' }
-const FIELD_NAMES: Record<string, string> = { title: 'Titel', date: 'Datum', subtype: 'Untertyp', author: 'Autor', recipient: 'Empfänger', location: 'Ort', description: 'Beschreibung' }
+// German names for what the user sees; the keys come from archive.yaml.
+const SUBTYPE_NAMES: Record<string, string> = { photo: 'Foto', drawing: 'Zeichnung', print: 'Druckgrafik', plan: 'Karte / Plan', letter: 'Brief', protocol: 'Protokoll', note: 'Notiz' }
+const TYPE_NAMES: Record<string, string> = { image: 'Bild', document: 'Dokument' }
+const FIELD_NAMES: Record<string, string> = { title: 'Titel', date: 'Datum', subtype: 'Untertyp', origin: 'Herkunft', subjects: 'Bezüge', recipient: 'Empfänger', location: 'Ort', description: 'Beschreibung', notes: 'Notizen', language: 'Sprache' }
 
-const show = (value: unknown): string => (Array.isArray(value) ? value.join(', ') : String(value ?? ''))
+const show = (value: unknown): string => {
+  if (Array.isArray(value)) return value.map(show).join(', ')
+  if (typeof value === 'object' && value !== null) {
+    const { name, location } = value as { name?: unknown; location?: unknown }
+    return [name, location].filter((x) => typeof x === 'string' && x).join(', ') || JSON.stringify(value)
+  }
+  return String(value ?? '')
+}
 const names = (list: string[]): string => `(${list.slice(0, 3).join(', ')}${list.length > 3 ? ', …' : ''})`
 
 /** What is still missing in an object, in words for the user. */
@@ -323,7 +332,7 @@ export class Workspace {
     for (const group of groups) {
       const id = ulid()
       const number = Math.max(0, ...this.objects.map((o) => o.number)) + 1
-      let text = newObjectText(id, call.type, call.type === 'document' ? call.subtype : undefined)
+      let text = newObjectText(id, call.type, call.subtype)
       for (const file of group) text = addFile(text, $state.snapshot(file.entry))
       for (const [field, value] of Object.entries(call.fields ?? {})) {
         const result = setField(text, field, value, undefined)
@@ -339,7 +348,7 @@ export class Workspace {
       created.push(this.objects[this.objects.length - 1])
     }
 
-    const label = call.type === 'photo' ? 'Foto' : (SUBTYPES[call.subtype ?? 'other'] ?? 'Dokument')
+    const label = (call.subtype && SUBTYPE_NAMES[call.subtype]) || TYPE_NAMES[call.type] || call.type
     for (const object of created) {
       const pages = this.files.filter((f) => f.objectId === object.id).length
       const what = call.type === 'document' && pages > 1 ? `${label}, ${pages} Seiten` : label

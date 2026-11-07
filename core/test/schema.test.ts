@@ -16,7 +16,7 @@ describe('valid objects', () => {
   it('accepts a multi-page letter', () => expect(validateObject(letter())).toEqual([]))
 })
 
-describe('photo', () => {
+describe('image', () => {
   it('needs exactly one file', () => {
     expect(messages(photo(), (o) => o.files.push(file('main', 'e'))).length).toBeGreaterThan(0)
     expect(messages(photo(), (o) => (o.files = [])).length).toBeGreaterThan(0)
@@ -32,12 +32,12 @@ describe('photo', () => {
 })
 
 describe('document', () => {
-  it('needs a subtype', () => {
-    expect(messages(letter(), (o) => delete o.subtype)).toContain('/: missing field "subtype"')
+  it('does not need a subtype', () => {
+    expect(messages(letter(), (o) => delete o.subtype)).toEqual([])
   })
 
-  it('knows only certain subtypes', () => {
-    expect(messages(letter(), (o) => (o.subtype = 'poem'))[0]).toMatch(/must be one of: letter/)
+  it('does not take the author, that is the origin', () => {
+    expect(messages(letter(), (o) => (o.author = 'x'))).toContain('/author: unknown field "author"')
   })
 
   it('needs seq on every page', () => {
@@ -54,8 +54,12 @@ describe('common fields', () => {
     expect(messages(photo(), (o) => (o.id = 'abc')).length).toBeGreaterThan(0)
   })
 
-  it('knows only the types photo and document', () => {
-    expect(messages(photo(), (o) => (o.type = 'book'))[0]).toMatch(/must be one of: photo, document/)
+  it('knows only the types image and document', () => {
+    expect(messages(photo(), (o) => (o.type = 'book'))[0]).toMatch(/must be one of: image, document/)
+  })
+
+  it('does not accept an empty subtype', () => {
+    expect(messages(photo(), (o) => (o.subtype = '')).length).toBeGreaterThan(0)
   })
 
   it('wants lat, lon and precision in a geocode', () => {
@@ -112,5 +116,31 @@ describe('files and variants', () => {
     delete ocr.width
     delete ocr.height
     expect(messages(photo(), (o) => o.files[0].variants.push(ocr))).toEqual([])
+  })
+})
+
+describe('origin and subjects', () => {
+  it('need a name', () => {
+    expect(messages(photo(), (o) => delete o.origin.name)).toContain('/origin: missing field "name"')
+    expect(messages(photo(), (o) => delete o.subjects[1].name)).toContain('/subjects/1: missing field "name"')
+  })
+
+  it('take a place and a geocode', () => {
+    const geocode = { lat: 52.99, lon: 11.57, precision: 'exact' }
+    expect(messages(photo(), (o) => (o.subjects[0] = { name: 'Haus', type: 'building', location: 'Markt 3', geocode }))).toEqual([])
+    expect(messages(photo(), (o) => (o.origin.geocode = { lat: 1 }))).toContain('/origin/geocode: missing field "lon"')
+  })
+
+  it('report a misspelled field', () => {
+    expect(messages(photo(), (o) => (o.subjects[0].nme = 'x'))).toContain('/subjects/0/nme: unknown field "nme"')
+  })
+
+  it('are not lists of plain names', () => {
+    expect(messages(photo(), (o) => (o.subjects = ['Heinrich'])).length).toBeGreaterThan(0)
+  })
+
+  it('are not accepted in the old form', () => {
+    expect(messages(photo(), (o) => (o.people = ['A']))).toContain('/people: unknown field "people"')
+    expect(messages(photo(), (o) => (o.photographer = 'A'))).toContain('/photographer: unknown field "photographer"')
   })
 })
