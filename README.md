@@ -24,7 +24,7 @@ them and describes them.
 ```
 npm install
 npm run dev            # app
-npm run dev:worker     # worker, needs worker/.dev.vars (ANTHROPIC_API_KEY)
+npm run dev:worker     # worker, needs worker/.dev.vars (Anthropic key, S3 bucket)
 npm test
 ```
 

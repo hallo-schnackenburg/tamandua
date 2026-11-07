@@ -17,6 +17,10 @@
   ]
   const greeting = greetings[Math.floor(Math.random() * greetings.length)]
 
+  // The hint in the input; it moves on to the next one after every message, starting at a random one.
+  const hints = ['Erzähl mir, was du da hast …', 'Was hast du da Schönes?', 'Worum geht’s?', 'Sag mir, was du siehst …', 'Erzähl mir etwas über die Datei …']
+  let hint = $state(Math.floor(Math.random() * hints.length))
+
   let text = $state('')
   let input: HTMLTextAreaElement | undefined
   let log: HTMLDivElement | undefined
@@ -62,6 +66,7 @@
     if (ws.busy || !text.trim()) return
     const message = text
     text = ''
+    hint = (hint + 1) % hints.length
     void ws.send(message)
   }
 
@@ -93,7 +98,7 @@
       bind:value={text}
       {onkeydown}
       rows="1"
-      placeholder="Beschreibung eingeben"
+      placeholder={hints[hint]}
     ></textarea>
     <button class="send" onclick={submit} disabled={ws.busy || !text.trim()} aria-label="Senden">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>

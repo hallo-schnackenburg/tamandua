@@ -1,2 +1,8 @@
-# Copy to .dev.vars and put the key in. .dev.vars is not committed.
+# Copy to .dev.vars and fill in the values. .dev.vars is not committed.
 ANTHROPIC_API_KEY=
+
+# Hetzner Object Storage (S3-compatible). The endpoint must match the bucket's region.
+S3_ENDPOINT=https://nbg1.your-objectstorage.com
+S3_BUCKET=stadtarchiv-dev
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=

@@ -1,5 +1,5 @@
 export type { Issue } from './types.js'
-export { assertSha256, fileDir, originalPath, variantPath } from './paths.js'
+export { assertSha256, fileDir, originalPath, parseFilePath, variantPath } from './paths.js'
 export type { VariantRef } from './paths.js'
 export { DEFAULT_CHUNK_SIZE, blobChunks, hashBlob, hashChunks } from './hash.js'
 export { validateObject } from './schema.js'

@@ -64,6 +64,7 @@
         basicSetup,
         yaml(),
         syntaxHighlighting(quiet),
+        EditorView.lineWrapping, // long texts (description, notes) wrap instead of running off to the right
         filesPlugin,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onchange(update.state.doc.toString())

@@ -6,14 +6,13 @@
   import Objects from './Objects.svelte'
   import { FakeAgent } from './agent.js'
   import { WorkerAgent } from './worker-agent.js'
-  import { FakeStore } from './uploader.js'
+  import { FakeStore, S3Store } from './uploader.js'
   import { Workspace } from './workspace.svelte.js'
 
   // All state lives in the workspace; this component only arranges the panes.
-  const ws = new Workspace(
-    new FakeStore(),
-    import.meta.env.VITE_WORKER_URL ? new WorkerAgent(import.meta.env.VITE_WORKER_URL) : new FakeAgent(),
-  )
+  // With a Worker the app is real: the model answers and files go to the bucket. Without one, stand-ins.
+  const workerUrl = import.meta.env.VITE_WORKER_URL
+  const ws = new Workspace(workerUrl ? new S3Store(workerUrl) : new FakeStore(), workerUrl ? new WorkerAgent(workerUrl) : new FakeAgent())
 
   function pick(event: Event) {
     const input = event.currentTarget as HTMLInputElement

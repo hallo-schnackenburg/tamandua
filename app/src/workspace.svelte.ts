@@ -69,6 +69,8 @@ interface Batch {
   processed: number
   /** Files that could not be read at all. */
   unreadable: string[]
+  /** Why uploads failed, for the message to the user. */
+  reasons: string[]
   listedTold?: boolean
   doneTold?: boolean
   /** Files dropped onto an object also go into it. */
@@ -206,7 +208,7 @@ export class Workspace {
     const files = [...list].sort(byName) // scans are usually numbered: natural order by name
     if (files.length === 0) return
     const message = this.#say('log', '')
-    const batch: Batch = { total: files.length, uploaded: 0, conflicts: [], failed: [], duplicates: [], message, objectId, shas: [], processed: 0, unreadable: [] }
+    const batch: Batch = { total: files.length, uploaded: 0, conflicts: [], failed: [], duplicates: [], message, objectId, shas: [], processed: 0, unreadable: [], reasons: [] }
     this.#report(batch)
     this.#queue.push(...files.map((file) => ({ file, batch })))
     void this.#run()
@@ -263,6 +265,8 @@ export class Workspace {
     const sentences: string[] = []
     if (batch.conflicts.length) sentences.push(`Beim Hochladen gab es bei ${them(batch.conflicts)} einen Konflikt ${names(batch.conflicts)}.`)
     if (failed.length) sentences.push(`${them(failed)} ${failed.length === 1 ? 'konnte' : 'konnten'} nicht hochgeladen werden ${names(failed)}.`)
+    // Why it failed (no server, refused, ...) is what the user needs to know or to pass on.
+    if (failed.length && batch.reasons.length) sentences.push(`Grund: ${[...new Set(batch.reasons)].join(' ')}`)
     if (sentences.length) this.#say('assistant', sentences.join(' '))
   }
 
@@ -311,12 +315,13 @@ export class Workspace {
     record.progress = 0
     this.#mark(record.sha256)
     try {
-      const result = await this.#store.upload(file, $state.snapshot(record.entry), (fraction) => (record.progress = fraction))
+      const result = await this.#store.upload(file, $state.snapshot(record.entry), (fraction) => (record.progress = fraction), record.preview)
       record.status = result.status
       record.message = result.message
     } catch (error) {
       record.status = 'error'
       record.message = (error as Error).message
+      batch.reasons.push(record.message)
     }
     record.progress = undefined
     this.#mark(record.sha256)

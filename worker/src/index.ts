@@ -1,14 +1,17 @@
-// The Worker. For now it has one route, POST /chat: it passes a chat message to the
-// model and returns tool calls. It holds the Anthropic key, so the key never reaches
-// the browser.
+// The Worker. Two routes:
+//   POST /chat    passes a chat message to the model and returns tool calls. It holds the
+//                 Anthropic key, so the key never reaches the browser.
+//   POST /upload  checks which files the browser wants to store and signs upload URLs for the
+//                 bucket. It holds the bucket's secret key, which never reaches the browser either.
 //
 // NOT YET THERE (needed before this is deployed for others): checking who is asking
 // (GitHub), a limit per person, and a spending cap. Until then it only runs locally.
 
 import { resolveGeocodes, type GeocodeEnv } from './geocode.js'
 import { BadRequest, buildModelRequest, parseChatRequest, toToolCalls } from './chat.js'
+import { parseUploadRequest, planUpload, s3Config, type UploadEnv } from './upload.js'
 
-export interface Env extends GeocodeEnv {
+export interface Env extends GeocodeEnv, UploadEnv {
   ANTHROPIC_API_KEY?: string
   ALLOWED_ORIGIN?: string
   MODEL?: string
@@ -48,6 +51,7 @@ export async function handle(
     })
   }
 
+  if (request.method === 'POST' && pathname === '/upload') return upload(request, env, fetchFn)
   if (request.method !== 'POST' || pathname !== '/chat') return json({ error: 'Not found.' }, 404, env)
   if (!env.ANTHROPIC_API_KEY) return json({ error: 'The server has no Anthropic key (worker/.dev.vars).' }, 500, env)
 
@@ -90,6 +94,28 @@ export async function handle(
   }
   const calls = await resolveGeocodes(toToolCalls(await answer.json()), env, fetchFn, pause)
   return json({ calls }, 200, env)
+}
+
+async function upload(request: Request, env: Env, fetchFn: typeof fetch): Promise<Response> {
+  const config = s3Config(env)
+  if (!config) return json({ error: 'The server has no storage settings (S3_* in worker/.dev.vars).' }, 500, env)
+
+  let items
+  try {
+    const raw = await request.text()
+    if (raw.length > MAX_BODY) throw new BadRequest('Request too large.')
+    items = parseUploadRequest(JSON.parse(raw))
+  } catch (error) {
+    const message = error instanceof BadRequest ? error.message : 'Body must be valid JSON.'
+    return json({ error: message }, 400, env)
+  }
+
+  try {
+    return json({ files: await planUpload(items, config, fetchFn) }, 200, env)
+  } catch (error) {
+    console.error('Storage error', (error as Error).message)
+    return json({ error: 'The storage could not be reached.' }, 502, env)
+  }
 }
 
 export default {

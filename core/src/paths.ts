@@ -47,3 +47,21 @@ export function variantPath(originalSha256: string, variant: VariantRef): string
   const hash12 = variant.sha256.slice(0, 12)
   return `${fileDir(originalSha256)}/${variant.name}.${hash12}.${normalizeExt(variant.ext)}`
 }
+
+const FILE_PATH = /^files\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})\/([a-z0-9_.-]+)$/
+const ORIGINAL_NAME = /^original\.[a-z0-9]+$/
+const VARIANT_NAME = /^[a-z0-9_]+(?:-[a-z0-9_]+)*\.[0-9a-f]{12}\.[a-z0-9]+$/
+
+/**
+ * Tells whether a path is one this layout produces and whose directories belong to the hash.
+ * The Worker uses it to refuse anything else before it signs an upload. Returns null if not.
+ */
+export function parseFilePath(path: string): { sha256: string; kind: 'original' | 'variant' } | null {
+  const match = FILE_PATH.exec(path)
+  if (!match) return null
+  const [, first, second, sha256, name] = match
+  if (first !== sha256.slice(0, 2) || second !== sha256.slice(2, 4)) return null
+  if (ORIGINAL_NAME.test(name)) return { sha256, kind: 'original' }
+  if (VARIANT_NAME.test(name)) return { sha256, kind: 'variant' }
+  return null
+}
