@@ -53,7 +53,9 @@
     {#if ws.busy}<p class="assistant wait">…</p>{/if}
   </div>
 
-  <div class="subject">{subject}</div>
+  <div class="subject">
+    {subject}
+  </div>
   <textarea
     bind:this={input}
     bind:value={text}

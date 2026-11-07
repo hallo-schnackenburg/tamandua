@@ -120,7 +120,10 @@ function addTurn(turns: Turn[], role: Turn['role'], content: string) {
 function describeContext(request: ChatRequest): string {
   const files = request.files.map((f) => `- ${f.name}: ${f.object ? `belongs to object ${f.object}` : 'no object yet'}`).join('\n')
   const objects = request.objects
-    .map((o) => `Object ${o.number}${o.issues.length ? ` (open: ${o.issues.join('; ')})` : ''}:\n\`\`\`yaml\n${o.text.trim()}\n\`\`\``)
+    .map((o) => {
+      const notes = [o.issues.length > 0 && `open: ${o.issues.join('; ')}`].filter(Boolean)
+      return `Object ${o.number}${notes.length ? ` (${notes.join('; ')})` : ''}:\n\`\`\`yaml\n${o.text.trim()}\n\`\`\``
+    })
     .join('\n\n')
   return [`Files this message is about:\n${files || '(none)'}`, objects && `Their objects:\n${objects}`, `Message from the user:\n${request.message}`]
     .filter(Boolean)

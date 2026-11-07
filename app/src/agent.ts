@@ -90,10 +90,11 @@ export class FakeAgent implements Agent {
       if (date) fields.date = date
     }
 
-    // Objects that already exist: change their fields.
-    if (objects.length > 0) {
-      if (Object.keys(fields).length === 0) return [{ tool: 'say', text: 'Ich habe keine Angaben erkannt, z. B. „Titel: …, Autor: …, 3.1.65“.' }]
-      return objects.flatMap((object) =>
+    const lower = message.toLowerCase()
+    const has = (word: RegExp) => word.test(lower)
+    const names = /\b(fotos?|bilder?|briefe?|protokolle?|notizen?|dokumente?)\b/
+    const patch = (list: AgentObject[]): ToolCall[] =>
+      list.flatMap((object) =>
         Object.entries(fields).map(([field, value]): ToolCall => ({
           tool: 'patch',
           object: object.number,
@@ -102,10 +103,14 @@ export class FakeAgent implements Agent {
           old: readField(object.text, field),
         })),
       )
+
+    // Selected files that already have an object: change its fields.
+    const selected = objects
+    if (selected.length > 0) {
+      if (Object.keys(fields).length === 0) return [{ tool: 'say', text: 'Ich habe keine Angaben erkannt, z. B. „Titel: …, Autor: …, 3.1.65“.' }]
+      return patch(selected)
     }
 
-    const lower = message.toLowerCase()
-    const has = (word: RegExp) => word.test(lower)
     if (has(/\b(fotos?|bilder?)\b/)) return [{ tool: 'create_object', type: 'photo', fields }]
     const documents: [RegExp, RegExp, string][] = [
       [/\bbrief\b/, /\bbriefe\b/, 'letter'],

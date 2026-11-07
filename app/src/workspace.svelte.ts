@@ -259,9 +259,12 @@ export class Workspace {
       .map((m) => ({ role: m.role === 'user' ? ('user' as const) : ('assistant' as const), text: m.text }))
     this.#say('user', text)
     const target = this.target
-    const objects = [...new Set(target.map((f) => f.objectId))]
-      .flatMap((id) => this.objects.filter((o) => o.id === id))
-      .map((o) => ({ number: o.number, text: o.text, issues: validateObjectYaml(o.text).map((i) => `${i.path} ${i.message}`) }))
+    const selected = [...new Set(target.map((f) => f.objectId))].flatMap((id) => this.objects.filter((o) => o.id === id))
+    const objects = selected.map((o) => ({
+      number: o.number,
+      text: o.text,
+      issues: validateObjectYaml(o.text).map((i) => `${i.path} ${i.message}`),
+    }))
     const numberOf = (id?: string) => this.objects.find((o) => o.id === id)?.number
 
     this.busy = true
@@ -366,25 +369,16 @@ export class Workspace {
   }
 
   /**
-   * After a change: show the first object in the editor. If everything is in order,
-   * the selection moves on to the next file without an object, so that the user can
-   * just keep typing. If something is missing, the selection stays, so that the next
-   * message (e.g. the missing title) goes to the same object.
+   * After a change: show the first object in the editor. The selection is never moved
+   * on its own, only the user selects. It is set to the files of the touched objects,
+   * so that the next chat message refers to exactly these objects.
    */
   #settle(objects: ObjectRecord[]) {
     const files = this.files.filter((f) => objects.some((o) => o.id === f.objectId))
     if (files.length === 0) return
     this.active = files[0].sha256
-
-    if (objects.some((o) => missing(o.text).length > 0)) {
-      this.selection = files.map((f) => f.sha256)
-      this.#anchor = files[0].sha256
-      return
-    }
-    const last = Math.max(...files.map((f) => this.files.indexOf(f)))
-    const next = this.files.slice(last + 1).find((f) => !f.objectId) ?? this.files.find((f) => !f.objectId)
-    this.selection = next ? [next.sha256] : []
-    this.#anchor = next?.sha256
+    this.selection = files.map((f) => f.sha256)
+    this.#anchor = files[0].sha256
   }
 
   /** The user changed the text in the editor. */

@@ -35,12 +35,17 @@
   }
 </script>
 
-<!-- The whole pane is the drop target, so there is no small target to aim at. -->
+<!-- The whole pane is the drop target, so there is no small target to aim at.
+     Dragging inside the pane is switched off (ondragstart, draggable="false" on the images):
+     otherwise the browser takes a dragged preview image along as a file, and dropping it
+     back here would add that image as a new file. -->
 <div
   class="zone"
   role="region"
   aria-label="Dateien"
+  ondragstart={(event) => event.preventDefault()}
   ondragover={(event) => {
+    if (!event.dataTransfer?.types.includes('Files')) return // not files from outside
     event.preventDefault()
     over = true
   }}
@@ -79,7 +84,7 @@
         >
           {#if object}<span class="badge">{object.number}</span>{/if}
           {#if file.preview}
-            <img src={urlOf(file.preview)} alt="" />
+            <img src={urlOf(file.preview)} alt="" draggable="false" />
           {:else}
             <span class="noimg">{extension(file.name)}</span>
           {/if}
