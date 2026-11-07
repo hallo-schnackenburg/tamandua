@@ -2,7 +2,7 @@
 // knows this interface. S3Store is the real one (via the Worker); FakeStore stands in
 // without a Worker: it needs no network and can pretend a conflict or a failure.
 
-import type { FileEntry } from '@archive/core'
+import type { FileEntry } from '@tamandua/core'
 
 export interface UploadResult {
   status: 'uploaded' | 'conflict'

@@ -4,7 +4,7 @@
 // anything itself. FakeAgent stands in until the real one (a model behind the
 // Worker) exists; it returns the same kind of calls, so everything behind it is real.
 
-import { readValue, type ObjectType } from '@archive/core'
+import { readValue, type ObjectType } from '@tamandua/core'
 
 export interface AgentFile {
   sha256: string

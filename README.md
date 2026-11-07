@@ -1,7 +1,8 @@
-# archive-capture
+# Tamandua
 
-Prototype of a browser tool for volunteers to capture archive objects (photos,
-letters, brochures, protocols) without knowing YAML.
+Tamandua (an anteater eating it all) is a prototype of a browser tool for
+volunteers to capture archive objects (photos, letters, brochures, protocols)
+without knowing YAML.
 
 Drop scans, describe them in a chat, and an AI agent fills in the metadata. The
 result is one validated YAML file per object, meant for a public data

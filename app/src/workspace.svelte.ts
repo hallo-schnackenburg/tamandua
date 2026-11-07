@@ -3,7 +3,7 @@
 // (`$state`) outside of a component: everything declared with `$state` here updates
 // whatever shows it, wherever that is.
 
-import { addFile, readField, readValue, removeFile, setField, ulid, validateObjectYaml, type FileEntry } from '@archive/core'
+import { addFile, readField, readValue, removeFile, setField, ulid, validateObjectYaml, type FileEntry } from '@tamandua/core'
 import type { Agent, ToolCall } from './agent.js'
 import * as db from './db.js'
 import { FIELD_NAMES, objectLabel } from './labels.js'

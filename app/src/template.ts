@@ -1,4 +1,4 @@
-import type { ObjectType } from '@archive/core'
+import type { ObjectType } from '@tamandua/core'
 
 /** Text of a new object. The id is a ULID; it is created once and never changes. */
 export function newObjectText(id: string, type: ObjectType, subtype?: string): string {

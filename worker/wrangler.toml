@@ -1,4 +1,4 @@
-name = "archive-worker"
+name = "tamandua-worker"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
@@ -8,9 +8,9 @@ ALLOWED_ORIGIN = "http://localhost:5173"
 MODEL = "claude-haiku-5-5"
 
 # Coordinate lookup (OpenStreetMap Nominatim): countries to search in (empty: everywhere) and the
-# User-Agent it needs; name the application and how to reach you, e.g. "archive-capture (you@example.org)".
+# User-Agent it needs; name the application and how to reach you, e.g. "tamandua (you@example.org)".
 GEOCODE_COUNTRIES = "de"
-GEOCODE_USER_AGENT = "archive-capture"
+GEOCODE_USER_AGENT = "tamandua"
 
 # Secrets are not written here:
 #   local:       worker/.dev.vars          (ANTHROPIC_API_KEY, S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID,

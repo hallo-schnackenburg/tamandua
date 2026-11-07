@@ -1,7 +1,7 @@
 // The real agent: sends the message to the Worker, which asks the model and returns
 // tool calls. The Worker holds the Anthropic key; the browser never sees it.
 
-import { stripFiles } from '@archive/core'
+import { stripFiles } from '@tamandua/core'
 import type { Agent, AgentRequest, ToolCall } from './agent.js'
 
 export class WorkerAgent implements Agent {

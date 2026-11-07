@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { locate, readField, readValue, validateObjectYaml } from '@archive/core'
+  import { locate, readField, readValue, validateObjectYaml } from '@tamandua/core'
   import type { Diagnostic } from '@codemirror/lint'
   import Editor from './Editor.svelte'
   import { colorOf, objectLabel } from './labels.js'

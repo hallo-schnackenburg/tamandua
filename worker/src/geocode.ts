@@ -47,7 +47,7 @@ export async function lookup(query: string, env: GeocodeEnv, fetchFn: typeof fet
   const countries = (env.GEOCODE_COUNTRIES ?? 'de').trim()
   if (countries) url.searchParams.set('countrycodes', countries)
 
-  const response = await fetchFn(url.toString(), { headers: { 'user-agent': env.GEOCODE_USER_AGENT ?? 'archive-capture' } })
+  const response = await fetchFn(url.toString(), { headers: { 'user-agent': env.GEOCODE_USER_AGENT ?? 'tamandua' } })
   if (!response.ok) throw new Error(`Geocoding failed (${response.status}).`)
   const hits = (await response.json()) as { lat?: string; lon?: string; display_name?: string; category?: string; type?: string; addresstype?: string }[]
   const hit = hits[0]

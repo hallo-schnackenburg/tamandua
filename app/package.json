@@ -1,5 +1,5 @@
 {
-  "name": "@archive/app",
+  "name": "@tamandua/app",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@archive/core": "*",
+    "@tamandua/core": "*",
     "@codemirror/lang-yaml": "^6.1.3",
     "@codemirror/language": "^6.13.1",
     "@codemirror/lint": "^6.9.7",

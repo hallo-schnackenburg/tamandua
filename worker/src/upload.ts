@@ -2,7 +2,7 @@
 // the paths are ones the app would produce, finds out which files are already there, and hands out
 // signed URLs for the rest. The files themselves go from the browser straight to the bucket.
 
-import { parseFilePath } from '@archive/core/paths'
+import { parseFilePath } from '@tamandua/core/paths'
 import { BadRequest } from './chat.js'
 import { presign, type S3Config } from './s3.js'
 

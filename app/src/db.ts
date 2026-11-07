@@ -4,7 +4,7 @@
 
 import type { ChatMessage, FileRecord, ObjectRecord } from './workspace.svelte.js'
 
-const DB_NAME = 'stadtarchiv'
+const DB_NAME = 'tamandua'
 const FILES = 'files'
 const OBJECTS = 'objects'
 const CHAT = 'chat' // one record, {id: 'log', messages: [...]}
