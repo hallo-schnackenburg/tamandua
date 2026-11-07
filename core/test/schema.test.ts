@@ -40,8 +40,8 @@ describe('document', () => {
     expect(messages(letter(), (o) => (o.author = 'x'))).toContain('/author: unknown field "author"')
   })
 
-  it('needs seq on every page', () => {
-    expect(messages(letter(), (o) => delete o.files[0].seq)).toContain('/files/0: missing field "seq"')
+  it('needs num on every page', () => {
+    expect(messages(letter(), (o) => delete o.files[0].num)).toContain('/files/0: missing field "num"')
   })
 })
 

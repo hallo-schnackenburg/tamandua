@@ -4,7 +4,7 @@
 //   - a file's path must be derived from its sha256
 //   - a variant must live in the directory of its file, and its name must carry
 //     the first 12 characters of its own sha256 and start with its kind
-//   - "seq" must be unique within an object, and a file may not appear twice
+//   - "num" must be unique within an object, and a file may not appear twice
 //
 // It only looks at what is well-formed and skips the rest, because malformed parts
 // are already reported by validateObject.
@@ -25,7 +25,7 @@ export function checkConsistency(object: unknown): Issue[] {
   if (!isRecord(object) || !Array.isArray(object.files)) return issues
 
   const seenSha = new Map<string, number>()
-  const seenSeq = new Map<number, number>()
+  const seenNum = new Map<number, number>()
 
   object.files.forEach((file, i) => {
     if (!isRecord(file)) return
@@ -37,10 +37,10 @@ export function checkConsistency(object: unknown): Issue[] {
       else issues.push({ path: `${at}/sha256`, message: `same file as /files/${first}` })
     }
 
-    if (typeof file.seq === 'number') {
-      const first = seenSeq.get(file.seq)
-      if (first === undefined) seenSeq.set(file.seq, i)
-      else issues.push({ path: `${at}/seq`, message: `seq ${file.seq} is already used by /files/${first}` })
+    if (typeof file.num === 'number') {
+      const first = seenNum.get(file.num)
+      if (first === undefined) seenNum.set(file.num, i)
+      else issues.push({ path: `${at}/num`, message: `num ${file.num} is already used by /files/${first}` })
     }
 
     if (isSha(file.sha256) && typeof file.path === 'string') {

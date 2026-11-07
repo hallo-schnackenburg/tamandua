@@ -3,9 +3,10 @@
 // (`$state`) outside of a component: everything declared with `$state` here updates
 // whatever shows it, wherever that is.
 
-import { addFile, setField, ulid, validateObjectYaml, type FileEntry } from '@archive/core'
+import { addFile, readField, removeFile, setField, ulid, validateObjectYaml, type FileEntry } from '@archive/core'
 import type { Agent, ToolCall } from './agent.js'
 import * as db from './db.js'
+import { FIELD_NAMES, objectLabel } from './labels.js'
 import { prepareFile } from './prepare.js'
 import { newObjectText } from './template.js'
 import type { FileStore } from './uploader.js'
@@ -60,11 +61,6 @@ interface Batch {
   message: ChatMessage
 }
 
-// German names for what the user sees; the keys come from archive.yaml.
-const SUBTYPE_NAMES: Record<string, string> = { photo: 'Foto', drawing: 'Zeichnung', print: 'Druckgrafik', plan: 'Karte / Plan', letter: 'Brief', protocol: 'Protokoll', note: 'Notiz' }
-const TYPE_NAMES: Record<string, string> = { image: 'Bild', document: 'Dokument' }
-const FIELD_NAMES: Record<string, string> = { title: 'Titel', date: 'Datum', subtype: 'Untertyp', origin: 'Herkunft', subjects: 'Bezüge', recipient: 'Empfänger', location: 'Ort', description: 'Beschreibung', notes: 'Notizen', language: 'Sprache' }
-
 const show = (value: unknown): string => {
   if (Array.isArray(value)) return value.map(show).join(', ')
   if (typeof value === 'object' && value !== null) {
@@ -73,6 +69,8 @@ const show = (value: unknown): string => {
   }
   return String(value ?? '')
 }
+/** "Datei „a.jpg“" or "3 Dateien". */
+const count = (list: string[]): string => (list.length === 1 ? `Datei „${list[0]}“` : `${list.length} Dateien`)
 const names = (list: string[]): string => `(${list.slice(0, 3).join(', ')}${list.length > 3 ? ', …' : ''})`
 
 /** What is still missing in an object, in words for the user. */
@@ -94,9 +92,15 @@ export class Workspace {
   focusTick = $state(0)
   /** SHA-256 of the selected files. */
   selection = $state<string[]>([])
+  /** True when the user picked several files by hand (shift or cmd click); only then are they dragged together. */
+  picked = $state(false)
   /** The last file clicked; its object is shown in the editor. */
   active = $state<string>()
   saveState = $state<'saved' | 'saving' | 'failed'>('saved')
+  /** SHA-256 of the files being dragged to an object or out of one; empty when nothing is dragged. */
+  dragging = $state<string[]>([])
+  /** The object whose row is under the dragged tiles, if any. */
+  dragTarget = $state<string>()
 
   #store: FileStore
   #agent: Agent
@@ -105,6 +109,7 @@ export class Workspace {
   #busy = false
   #dirtyFiles = new Set<string>()
   #dirtyObjects = new Set<string>()
+  #removedObjects = new Set<string>()
   #dirtyChat = false
   #timer: ReturnType<typeof setTimeout> | undefined
 
@@ -113,15 +118,9 @@ export class Workspace {
     this.#agent = agent
   }
 
-  /**
-   * The files a chat message is about: the selection, or, with nothing selected,
-   * the first file that has no object yet.
-   */
+  /** The files a chat message is about: the selected ones. Only the user selects. */
   get target(): FileRecord[] {
-    const chosen = this.files.filter((f) => this.selection.includes(f.sha256))
-    if (chosen.length > 0) return chosen
-    const first = this.files.find((f) => !f.objectId)
-    return first ? [first] : []
+    return this.files.filter((f) => this.selection.includes(f.sha256))
   }
 
   /** The object of the active file, if it has one. */
@@ -234,6 +233,7 @@ export class Workspace {
   // --- selecting ---
 
   select(sha256: string, { range = false, toggle = false } = {}) {
+    this.picked = range || toggle
     if (range && this.#anchor) {
       const from = this.files.findIndex((f) => f.sha256 === this.#anchor)
       const to = this.files.findIndex((f) => f.sha256 === sha256)
@@ -248,6 +248,114 @@ export class Workspace {
     }
     this.active = sha256
     this.focusTick++ // typing goes to the chat from here on
+  }
+
+  /** Selects all files of an object and shows it. This is what a click on the object's row does. */
+  activate(objectId: string) {
+    const files = this.files.filter((f) => f.objectId === objectId)
+    if (files.length === 0) return
+    this.selection = files.map((f) => f.sha256)
+    this.picked = false // the object's files are selected, but dragging one tile moves only that one
+    this.#anchor = files[0].sha256
+    this.active = files[0].sha256
+    this.focusTick++
+  }
+
+  /** Closes the open object. The selection stays. */
+  collapse() {
+    this.active = undefined
+  }
+
+  // --- rearranging: files go into an object, or come out of it ---
+
+  /** Puts files into an object. A file that belongs to another object is moved. */
+  attach(shas: string[], objectId: string) {
+    const target = this.objects.find((o) => o.id === objectId)
+    const files = this.files.filter((f) => shas.includes(f.sha256) && f.objectId !== objectId).sort(byName)
+    if (!target || files.length === 0) return
+    if (readField(target.text, 'type') === 'image' && this.files.some((f) => f.objectId === objectId)) {
+      this.#say('status', `Object ${target.number} ist ein Bild und hat schon eine Datei.`)
+      return
+    }
+
+    const lines: string[] = []
+    const added: string[] = []
+    const moved = new Map<number, string[]>()
+    const emptied = new Set<ObjectRecord>()
+    for (const file of files) {
+      const from = this.objects.find((o) => o.id === file.objectId)
+      try {
+        // Compute both new texts first, so that nothing is half done if one of them fails.
+        const text = addFile(target.text, $state.snapshot(file.entry))
+        const fromText = from ? removeFile(from.text, file.sha256) : undefined
+        if (from && fromText !== undefined) this.#leave(file, from, fromText, emptied)
+        target.text = text
+        target.updatedAt = Date.now()
+        this.#markObject(target.id)
+        file.objectId = objectId
+        this.#mark(file.sha256)
+        if (from) moved.set(from.number, [...(moved.get(from.number) ?? []), file.name])
+        else added.push(file.name)
+      } catch (error) {
+        lines.push(`Object ${target.number}: ${(error as Error).message}`)
+      }
+    }
+
+    if (added.length) lines.unshift(`${count(added)} zu Object ${target.number} hinzugefügt.`)
+    for (const [number, list] of moved) lines.push(`${count(list)} von Object ${number} nach Object ${target.number} verschoben.`)
+    this.#discard(emptied, lines)
+    this.#say('status', lines.join('\n'))
+    this.activate(objectId)
+  }
+
+  /** Takes files out of their objects. An object without files is deleted. */
+  detach(shas: string[]) {
+    const files = this.files.filter((f) => shas.includes(f.sha256) && f.objectId)
+    if (files.length === 0) return
+    const lines: string[] = []
+    const emptied = new Set<ObjectRecord>()
+    const freed: FileRecord[] = []
+    const from = new Map<number, string[]>()
+    for (const file of files) {
+      const object = this.objects.find((o) => o.id === file.objectId)
+      if (!object) continue
+      try {
+        this.#leave(file, object, removeFile(object.text, file.sha256), emptied)
+        freed.push(file)
+        from.set(object.number, [...(from.get(object.number) ?? []), file.name])
+      } catch (error) {
+        lines.push(`Object ${object.number}: ${(error as Error).message}`)
+      }
+    }
+    for (const [number, list] of from) lines.unshift(`${count(list)} aus Object ${number} herausgenommen.`)
+    this.#discard(emptied, lines)
+    if (lines.length) this.#say('status', lines.join('\n'))
+    if (freed.length) {
+      this.picked = false
+      this.selection = freed.map((f) => f.sha256)
+      this.#anchor = freed[0].sha256
+      this.active = freed[0].sha256
+    }
+  }
+
+  /** The file leaves its object; `text` is the object's new YAML. Notes the object if it has no file left. */
+  #leave(file: FileRecord, from: ObjectRecord, text: string, emptied: Set<ObjectRecord>) {
+    from.text = text
+    from.updatedAt = Date.now()
+    this.#markObject(from.id)
+    file.objectId = undefined
+    this.#mark(file.sha256)
+    if (!this.files.some((f) => f.objectId === from.id)) emptied.add(from)
+  }
+
+  #discard(emptied: Set<ObjectRecord>, lines: string[]) {
+    for (const object of emptied) {
+      this.objects = this.objects.filter((o) => o.id !== object.id)
+      this.#dirtyObjects.delete(object.id)
+      this.#removedObjects.add(object.id)
+      lines.push(`Object ${object.number} hat keine Dateien mehr und wurde gelöscht.`)
+    }
+    if (emptied.size > 0) this.#schedule()
   }
 
   // --- chat: the user writes, the agent answers with tool calls, the workspace carries them out ---
@@ -322,7 +430,7 @@ export class Workspace {
   #create(call: Extract<ToolCall, { tool: 'create_object' }>, target: FileRecord[], lines: string[]): ObjectRecord[] {
     const free = target.filter((f) => !f.objectId)
     if (free.length === 0) {
-      lines.push('Die Dateien gehören schon zu einem Object.')
+      lines.push(target.length === 0 ? 'Wähle zuerst eine oder mehrere Dateien aus.' : 'Die Dateien gehören schon zu einem Object.')
       return []
     }
     const together = call.type === 'document' && call.together !== false
@@ -348,7 +456,7 @@ export class Workspace {
       created.push(this.objects[this.objects.length - 1])
     }
 
-    const label = (call.subtype && SUBTYPE_NAMES[call.subtype]) || TYPE_NAMES[call.type] || call.type
+    const label = objectLabel(call.type, call.subtype)
     for (const object of created) {
       const pages = this.files.filter((f) => f.objectId === object.id).length
       const what = call.type === 'document' && pages > 1 ? `${label}, ${pages} Seiten` : label
@@ -427,15 +535,17 @@ export class Workspace {
     const objects = [...this.#dirtyObjects].flatMap((id) => this.objects.filter((o) => o.id === id))
     this.#dirtyFiles.clear()
     this.#dirtyObjects.clear()
+    const removed = [...this.#removedObjects]
+    this.#removedObjects.clear()
     const chat = this.#dirtyChat
     this.#dirtyChat = false
-    if (files.length === 0 && objects.length === 0 && !chat) return
+    if (files.length === 0 && objects.length === 0 && removed.length === 0 && !chat) return
 
     this.saveState = 'saving'
     try {
       // A plain copy is needed: reactive objects cannot be stored. Progress is not kept.
       const plainFiles = files.map((f) => ({ ...$state.snapshot(f), progress: undefined }))
-      await db.save(plainFiles, objects.map((o) => $state.snapshot(o)), chat ? $state.snapshot(this.chat.slice(-200)) : undefined)
+      await db.save(plainFiles, objects.map((o) => $state.snapshot(o)), chat ? $state.snapshot(this.chat.slice(-200)) : undefined, removed)
       this.saveState = 'saved'
     } catch {
       this.saveState = 'failed'

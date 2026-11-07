@@ -59,7 +59,7 @@ export function letter(): Obj {
     title: 'Brief an die Schwester',
     date: '1923-05-14',
     language: 'de',
-    files: [file('page', 'c', { seq: 1 }), file('page', 'd', { seq: 2 })],
+    files: [file('page', 'c', { num: 1 }), file('page', 'd', { num: 2 })],
   }
 }
 

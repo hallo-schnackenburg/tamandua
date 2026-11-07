@@ -36,11 +36,12 @@ function done(transaction: IDBTransaction): Promise<void> {
 }
 
 /** Writes all given records in one transaction. Pass plain copies (`$state.snapshot`). */
-export async function save(files: FileRecord[], objects: ObjectRecord[], chat?: ChatMessage[]): Promise<void> {
+export async function save(files: FileRecord[], objects: ObjectRecord[], chat?: ChatMessage[], removedObjects: string[] = []): Promise<void> {
   const db = await database()
   const transaction = db.transaction([FILES, OBJECTS, CHAT], 'readwrite')
   for (const file of files) transaction.objectStore(FILES).put(file)
   for (const object of objects) transaction.objectStore(OBJECTS).put(object)
+  for (const id of removedObjects) transaction.objectStore(OBJECTS).delete(id)
   if (chat) transaction.objectStore(CHAT).put({ id: 'log', messages: chat })
   await done(transaction)
 }

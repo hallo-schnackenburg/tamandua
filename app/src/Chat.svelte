@@ -21,13 +21,8 @@
     void tick().then(() => log && (log.scrollTop = log.scrollHeight))
   })
 
-  // What the next message is about.
-  const subject = $derived.by(() => {
-    const files = ws.target
-    if (files.length === 0) return 'Keine freie Datei'
-    if (ws.selection.length === 0) return `Nächste freie Datei: ${files[0].name}`
-    return files.length === 1 ? files[0].name : `${files.length} Dateien`
-  })
+  // What the next message is about: the selected files.
+  const subject = $derived(ws.target.length === 0 ? '' : ws.target.length === 1 ? ws.target[0].name : `${ws.target.length} Dateien`)
 
   function submit() {
     const message = text
@@ -53,9 +48,7 @@
     {#if ws.busy}<p class="assistant wait">…</p>{/if}
   </div>
 
-  <div class="subject">
-    {subject}
-  </div>
+  {#if subject}<div class="subject">{subject}</div>{/if}
   <textarea
     bind:this={input}
     bind:value={text}

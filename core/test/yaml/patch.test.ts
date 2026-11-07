@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
-import { addFile, setField } from '../../src/yaml/patch.js'
+import { addFile, removeFile, setField } from '../../src/yaml/patch.js'
 import { validateObjectYaml } from '../../src/yaml/validate.js'
 import { file, sha } from '../fixtures.js'
 
@@ -36,7 +36,7 @@ describe('addFile', () => {
       const { role: _r, ...e } = file('x', c)
       text = addFile(text, e)
     }
-    expect(parse(text).files.map((f: any) => [f.role, f.seq])).toEqual([['page', 1], ['page', 2], ['page', 3]])
+    expect(parse(text).files.map((f: any) => [f.role, f.num])).toEqual([['page', 1], ['page', 2], ['page', 3]])
     expect(validateObjectYaml(text)).toEqual([])
   })
 
@@ -70,7 +70,7 @@ subtype: letter
 title:   # to do
 files:
   - role: page
-    seq: 1
+    num: 1
 `
   const ok = (r: ReturnType<typeof setField>): string => {
     if (!r.ok) throw new Error('expected ok')
@@ -141,5 +141,40 @@ files:
 
   it('refuses broken YAML', () => {
     expect(() => setField('title: [x', 'title', 'y', undefined)).toThrow(/syntax error/)
+  })
+})
+
+describe('removeFile', () => {
+  const three = (): string => {
+    let text = base('document', 'subtype: letter\n')
+    for (const c of ['a', 'b', 'c']) text = addFile(text, { ...entry, sha256: sha(c).replace(/./g, c) })
+    return text
+  }
+  const names = (text: string) => parse(text).files.map((f: any) => [f.sha256[0], f.num])
+
+  it('removes the file and keeps the rest, comments included', () => {
+    const out = removeFile(three(), sha('b'))
+    expect(names(out)).toEqual([['a', 1], ['c', 2]])
+    expect(out).toContain('# my note')
+    expect(out).toContain('title: Test # keep me')
+  })
+
+  it('numbers the pages without a gap', () => {
+    expect(names(removeFile(three(), sha('a')))).toEqual([['b', 1], ['c', 2]])
+  })
+
+  it('numbers by the old order, not by the order in the text', () => {
+    const swapped = three().replace('num: 1', 'num: 9').replace('num: 2', 'num: 1').replace('num: 9', 'num: 2')
+    expect(names(removeFile(swapped, sha('c')))).toEqual([['a', 2], ['b', 1]].map(([s, n]) => [s, n === 2 ? 2 : 1]))
+  })
+
+  it('leaves an empty list when the last file goes', () => {
+    const one = addFile(base('image'), entry)
+    expect(parse(removeFile(one, entry.sha256 as string)).files).toEqual([])
+  })
+
+  it('refuses a file that is not part of the object, and broken YAML', () => {
+    expect(() => removeFile(three(), sha('z'))).toThrow(/not part of the object/)
+    expect(() => removeFile('files: [x', sha('a'))).toThrow(/syntax error/)
   })
 })

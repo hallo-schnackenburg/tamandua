@@ -6,8 +6,9 @@ object_types:
     - plan
   document:
     - letter
-    - protocol
     - note
+    - protocol
+    - brochure
 
 entity_types:
   - person

@@ -2,7 +2,7 @@
 
 export const OBJECT_TYPES = {
   image: ['photo', 'drawing', 'print', 'plan'],
-  document: ['letter', 'protocol', 'note'],
+  document: ['letter', 'note', 'protocol', 'brochure'],
 } as const
 
 export type ObjectType = keyof typeof OBJECT_TYPES

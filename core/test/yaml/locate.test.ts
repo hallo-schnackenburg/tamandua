@@ -28,7 +28,7 @@ describe('locate', () => {
   })
 
   it('marks the parent when the path does not exist', () => {
-    expect(cut('/files/0/seq')).toBe(cut('/files/0'))
+    expect(cut('/files/0/num')).toBe(cut('/files/0'))
     expect(cut('/files/0')).toBe('role: main')
   })
 

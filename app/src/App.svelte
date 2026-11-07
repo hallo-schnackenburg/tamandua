@@ -1,10 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { locate, validateObjectYaml } from '@archive/core'
-  import type { Diagnostic } from '@codemirror/lint'
   import Chat from './Chat.svelte'
-  import Editor from './Editor.svelte'
   import Files from './Files.svelte'
+  import Objects from './Objects.svelte'
   import { FakeAgent } from './agent.js'
   import { WorkerAgent } from './worker-agent.js'
   import { FakeStore } from './uploader.js'
@@ -23,13 +21,17 @@
     return () => document.removeEventListener('visibilitychange', onHide)
   })
 
-  // The object of the file that was clicked last. Without one, the editor stays empty.
-  const object = $derived(ws.activeObject)
-  const text = $derived(object?.text ?? '')
-  const issues = $derived(object ? validateObjectYaml(text) : [])
-  const diagnostics = $derived<Diagnostic[]>(
-    issues.map((issue) => ({ ...locate(text, issue.path), severity: 'error', message: issue.message })),
-  )
+  // A file dropped on a part of the page that does not take it would be opened by the browser,
+  // and the page with it. Files from outside go to the "Dateien" pane only.
+  onMount(() => {
+    const stop = (event: DragEvent) => event.dataTransfer?.types.includes('Files') && event.preventDefault()
+    window.addEventListener('dragover', stop)
+    window.addEventListener('drop', stop)
+    return () => {
+      window.removeEventListener('dragover', stop)
+      window.removeEventListener('drop', stop)
+    }
+  })
 </script>
 
 <main>
@@ -47,24 +49,8 @@
     </section>
 
     <section class="pane">
-      <h2>YAML{#if object} <small>Object {object.number}</small>{/if}</h2>
-      <div class="editor-box">
-        {#if object}
-          <!-- {#key}: a new editor per object, so that undo never reaches into another object. -->
-          {#key object.id}
-            <Editor value={object.text} {diagnostics} onchange={(next) => ws.updateText(next)} />
-          {/key}
-        {/if}
-      </div>
-      <ul class="issues" aria-label="Probleme">
-        {#if object}
-          {#each issues as issue}
-            <li><code>{issue.path}</code> {issue.message}</li>
-          {:else}
-            <li class="ok">Keine Probleme.</li>
-          {/each}
-        {/if}
-      </ul>
+      <h2>Objects{#if ws.objects.length > 0} <small>{ws.objects.length}</small>{/if}</h2>
+      <Objects workspace={ws} />
     </section>
 
     <section class="pane">
@@ -83,9 +69,4 @@
   .pane { display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: 6px; padding: 12px; }
   h2 { margin: 0 0 8px; font-size: 1rem; }
   h2 small { font-weight: 400; color: #777; margin-left: 6px; }
-  .editor-box { flex: 1; min-height: 0; border: 1px solid #ddd; }
-  .issues { margin: 8px 0 0; padding: 0; list-style: none; font-size: 0.9rem; max-height: 8rem; overflow: auto; }
-  .issues li { padding: 2px 0; color: #a11; }
-  .issues li.ok { color: #272; }
-  code { background: #eee; padding: 0 4px; border-radius: 3px; }
 </style>

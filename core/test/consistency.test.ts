@@ -36,14 +36,14 @@ describe('checkConsistency', () => {
     expect(message).toMatch(/must be or start with the kind "web"/)
   })
 
-  it('finds a seq used twice', () => {
-    expect(problems(letter(), (o) => (o.files[1].seq = 1))).toEqual([
-      '/files/1/seq: seq 1 is already used by /files/0',
+  it('finds a num used twice', () => {
+    expect(problems(letter(), (o) => (o.files[1].num = 1))).toEqual([
+      '/files/1/num: num 1 is already used by /files/0',
     ])
   })
 
   it('finds the same file twice in one object', () => {
-    const messages = problems(letter(), (o) => o.files.push(file('page', 'c', { seq: 3 })))
+    const messages = problems(letter(), (o) => o.files.push(file('page', 'c', { num: 3 })))
     expect(messages).toEqual(['/files/2/sha256: same file as /files/0'])
   })
 

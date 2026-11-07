@@ -2,13 +2,13 @@
 // the user's own formatting). The browser and, later, the agent change the text
 // through functions like these instead of rewriting it.
 
-import { Scalar, isMap, isSeq, parseDocument } from 'yaml'
+import { Scalar, isMap, isSeq, parseDocument, type YAMLMap } from 'yaml'
 
 export type FileEntry = Record<string, unknown>
 
 /**
  * Adds a file to `files`. An image has exactly one file (role "main"); a document
- * takes pages (role "page") with the next free `seq`. Throws an Error with a
+ * takes pages (role "page") with the next free `num`. Throws an Error with a
  * message for the user if the file cannot be added.
  */
 export function addFile(text: string, entry: FileEntry): string {
@@ -32,12 +32,33 @@ export function addFile(text: string, entry: FileEntry): string {
     if (items.length > 0) throw new Error('An image has exactly one file.')
     full = { role: 'main', ...entry }
   } else {
-    const seqs = items.map((f) => Number((f as FileEntry)?.seq)).filter(Number.isFinite)
-    full = { role: 'page', seq: Math.max(0, ...seqs) + 1, ...entry }
+    const nums = items.map((f) => Number((f as FileEntry)?.num)).filter(Number.isFinite)
+    full = { role: 'page', num: Math.max(0, ...nums) + 1, ...entry }
   }
 
   if (isSeq(existing)) existing.add(doc.createNode(full))
   else doc.set('files', doc.createNode([full]))
+  return doc.toString()
+}
+
+/**
+ * Removes the file with this hash from `files` and numbers the remaining pages
+ * 1, 2, 3 ... again, so that there is no gap. Returns the new text. What happens to an
+ * object that has no file left is up to the caller. Throws an Error if the file is
+ * not part of the object.
+ */
+export function removeFile(text: string, sha256: string): string {
+  const doc = parseDocument(text)
+  if (doc.errors.length > 0 || !isMap(doc.contents)) {
+    throw new Error('The YAML has a syntax error; fix it first.')
+  }
+  const files = doc.get('files')
+  const at = isSeq(files) ? files.items.findIndex((item) => isMap(item) && item.get('sha256') === sha256) : -1
+  if (!isSeq(files) || at === -1) throw new Error('This file is not part of the object.')
+
+  files.items.splice(at, 1)
+  const pages = files.items.filter((item): item is YAMLMap => isMap(item) && typeof item.get('num') === 'number')
+  pages.sort((a, b) => Number(a.get('num')) - Number(b.get('num'))).forEach((page, i) => page.set('num', i + 1))
   return doc.toString()
 }
 

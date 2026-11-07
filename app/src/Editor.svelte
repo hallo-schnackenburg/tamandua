@@ -56,6 +56,8 @@
 <div class="editor" bind:this={host}></div>
 
 <style>
-  .editor { height: 100%; overflow: auto; background: white; }
-  .editor :global(.cm-editor) { height: 100%; }
+  /* The editor grows with the text, up to a maximum; longer text scrolls inside. */
+  .editor { background: white; }
+  .editor :global(.cm-editor) { max-height: 34rem; }
+  .editor :global(.cm-scroller) { overflow: auto; }
 </style>
