@@ -29,9 +29,11 @@ npm run dev:worker     # worker, needs worker/.dev.vars (Anthropic key, S3 bucke
 npm test
 ```
 
-Without `VITE_WORKER_URL` in `app/.env.local` the app uses a simple fake agent.
+Copy `app/.env.example` to `app/.env.local` to use the real Worker (it must run; the app reaches it below
+`/api`). Without it the app uses a fake agent, fake uploads and a fake sign-in. Sign-in and the data repository
+are set up as described in `doc/github-einrichtung.md`.
 
 ## Status
 
-Early prototype. Upload, GitHub sync and Worker auth are not built yet. Notes
+Early prototype. Notes
 are in `doc/`.

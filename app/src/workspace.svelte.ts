@@ -10,6 +10,8 @@ import { FIELD_NAMES, objectLabel } from './labels.js'
 import { prepareFile } from './prepare.js'
 import { newObjectText } from './template.js'
 import type { FileStore } from './uploader.js'
+import { SignedOut } from './api.js'
+import type { Backend, User } from './backend.js'
 
 /** A file that was dropped and hashed. It is identified by its SHA-256. */
 export interface FileRecord {
@@ -35,7 +37,26 @@ export interface ObjectRecord {
   number: number
   text: string
   updatedAt: number
+  /** The text as it is on the person's branch in the data repository; none if it never got there. */
+  synced?: string
+  /** What happened to the saved text since: it waits on the branch, is in a pull request, or was accepted. */
+  stage?: 'saved' | 'submitted' | 'merged'
+  /** The pull request it is part of, while `stage` is `submitted`. */
+  pull?: number
 }
+
+/** Where an object stands, for the badge on its row. */
+export type Standing = 'local' | 'changed' | 'saved' | 'submitted' | 'merged'
+
+export type Session =
+  | { state: 'loading' }
+  | { state: 'anonymous'; notice?: string }
+  | { state: 'user'; user: User }
+  | { state: 'error'; message: string }
+
+/** How long after the last change the objects are saved to GitHub, and how long to wait after a failure. */
+const SYNC_DELAY = 30_000
+const SYNC_RETRY = 60_000
 
 /** A file that is still being hashed, or could not be read. */
 export interface Pending {
@@ -146,8 +167,19 @@ export class Workspace {
   /** The object whose row is under the dragged tiles, if any. */
   dragTarget = $state<string>()
 
+  session = $state<Session>({ state: 'loading' })
+  /** Saving to GitHub: `failed` is shown to the person, with the reason in `syncError`. */
+  syncState = $state<'idle' | 'saving' | 'failed'>('idle')
+  syncError = $state<string>()
+  /** True while the pull request is being opened. */
+  submitting = $state(false)
+
   #store: FileStore
   #agent: Agent
+  #backend: Backend
+  #syncTimer: ReturnType<typeof setTimeout> | undefined
+  #syncing = false
+  #syncAgain = false
   #anchor: string | undefined
   #queue: { file: File; batch: Batch }[] = []
   #busy = false
@@ -158,9 +190,10 @@ export class Workspace {
   #dirtyUi = false
   #timer: ReturnType<typeof setTimeout> | undefined
 
-  constructor(store: FileStore, agent: Agent) {
+  constructor(store: FileStore, agent: Agent, backend: Backend) {
     this.#store = store
     this.#agent = agent
+    this.#backend = backend
   }
 
   /** The files a chat message is about: the selected ones. Only the user selects. */
@@ -758,6 +791,7 @@ export class Workspace {
   #markObject(id: string) {
     this.#dirtyObjects.add(id)
     this.#schedule()
+    this.#syncSoon()
   }
 
   #schedule() {
@@ -790,6 +824,166 @@ export class Workspace {
       this.saveState = 'saved'
     } catch {
       this.saveState = 'failed'
+    }
+  }
+
+  // --- GitHub: who is signed in, saving to the person's branch, submitting, following the pull request ---
+
+  get loginUrl(): string {
+    return this.#backend.loginUrl
+  }
+
+  /** Asks who is signed in. `notice` is what the sign-in page says if nobody is (e.g. why a sign-in was refused). */
+  async refreshSession(notice?: string) {
+    try {
+      const user = await this.#backend.me()
+      this.session = user ? { state: 'user', user } : { state: 'anonymous', notice }
+      if (user) {
+        this.#syncSoon(1000)
+        void this.checkPulls()
+      }
+    } catch (error) {
+      this.session = { state: 'error', message: (error as Error).message }
+    }
+  }
+
+  /** The server says the session is over. What is in the browser stays. */
+  signedOut() {
+    if (this.session.state === 'anonymous') return
+    clearTimeout(this.#syncTimer)
+    this.session = { state: 'anonymous', notice: 'Deine Sitzung ist abgelaufen. Bitte melde dich neu an.' }
+  }
+
+  async logout() {
+    await this.#backend.logout()
+    clearTimeout(this.#syncTimer)
+    this.session = { state: 'anonymous' }
+  }
+
+  /** Where an object stands. */
+  standing(object: ObjectRecord): Standing {
+    if (object.synced === undefined) return 'local'
+    if (object.text !== object.synced) return 'changed'
+    return object.stage ?? 'saved'
+  }
+
+  /** The objects the next pull request would bring: everything that is not already part of one. */
+  get outgoing(): ObjectRecord[] {
+    return this.objects.filter((o) => {
+      const standing = this.standing(o)
+      return standing !== 'submitted' && standing !== 'merged'
+    })
+  }
+
+  #syncSoon(delay = SYNC_DELAY) {
+    if (this.session.state !== 'user') return
+    clearTimeout(this.#syncTimer)
+    this.#syncTimer = setTimeout(() => void this.sync(), delay)
+  }
+
+  /** Saves every changed object to the person's branch in one commit. Returns whether everything is saved. */
+  async sync(): Promise<boolean> {
+    clearTimeout(this.#syncTimer)
+    if (this.session.state !== 'user') return false
+    if (this.#syncing) {
+      this.#syncAgain = true
+      return false
+    }
+    const todo = this.objects.filter((o) => o.text !== o.synced).map((object) => ({ object, text: object.text }))
+    if (todo.length === 0) return true
+
+    this.#syncing = true
+    this.syncState = 'saving'
+    let ok = false
+    try {
+      await this.#backend.save(todo.map(({ object, text }) => ({ id: object.id, text })))
+      for (const { object, text } of todo) {
+        object.synced = text
+        // An object that was accepted before and is changed again starts a new round.
+        if (object.stage !== 'submitted') object.stage = 'saved'
+        this.#dirtyObjects.add(object.id)
+      }
+      this.#schedule()
+      this.syncState = 'idle'
+      this.syncError = undefined
+      ok = true
+    } catch (error) {
+      if (error instanceof SignedOut) {
+        this.syncState = 'idle'
+      } else {
+        this.syncState = 'failed'
+        this.syncError = (error as Error).message
+        this.#syncSoon(SYNC_RETRY)
+      }
+    } finally {
+      this.#syncing = false
+    }
+    if (this.#syncAgain || this.objects.some((o) => o.text !== o.synced)) {
+      this.#syncAgain = false
+      if (ok) this.#syncSoon()
+    }
+    return ok && !this.objects.some((o) => o.text !== o.synced)
+  }
+
+  /** Saves what is open, then opens the pull request. Tells the person in the chat what came of it. */
+  async submit() {
+    if (this.submitting || this.session.state !== 'user' || this.outgoing.length === 0) return
+    this.submitting = true
+    try {
+      const open = this.outgoing.filter((o) => validateObjectYaml(o.text).length > 0)
+      if (open.length > 0) {
+        const list = open.slice(0, 3).map(refer).join(', ') + (open.length > 3 ? ', …' : '')
+        this.#say('status', `Eingereicht wird erst, wenn alle Objekte vollständig sind. Es fehlt noch etwas bei: ${list}.`)
+        return
+      }
+      // Not syncing in the middle of an edit: wait for a running save, then save the rest.
+      while (this.#syncing) await new Promise((resolve) => setTimeout(resolve, 100))
+      if (!(await this.sync())) {
+        this.#say('status', `Das Einreichen ging nicht, weil das Speichern nicht geklappt hat${this.syncError ? `: ${this.syncError}` : '.'}`)
+        return
+      }
+      const sent = this.objects.filter((o) => o.stage === 'saved')
+      const pull = await this.#backend.submit()
+      for (const object of sent) {
+        object.stage = 'submitted'
+        object.pull = pull.number
+        this.#dirtyObjects.add(object.id)
+      }
+      this.#schedule()
+      const n = sent.length
+      this.#say('assistant', `Ich habe ${n === 1 ? 'ein Objekt' : `${n} Objekte`} eingereicht. Sie werden jetzt geprüft; du kannst in der Zwischenzeit weitermachen.`)
+    } catch (error) {
+      if (!(error instanceof SignedOut)) this.#say('status', `Das Einreichen ging nicht: ${(error as Error).message}`)
+    } finally {
+      this.submitting = false
+    }
+  }
+
+  /** Looks at the pull requests that wait for review: accepted objects are marked, a closed one is open for revision. */
+  async checkPulls() {
+    if (this.session.state !== 'user') return
+    const numbers = [...new Set(this.objects.filter((o) => o.stage === 'submitted' && o.pull).map((o) => o.pull as number))]
+    for (const number of numbers) {
+      try {
+        const pull = await this.#backend.pull(number)
+        if (pull.state === 'open') continue
+        const parts = this.objects.filter((o) => o.stage === 'submitted' && o.pull === number)
+        for (const object of parts) {
+          object.stage = pull.merged ? 'merged' : 'saved'
+          object.pull = undefined
+          this.#dirtyObjects.add(object.id)
+        }
+        this.#schedule()
+        const n = parts.length
+        this.#say(
+          pull.merged ? 'assistant' : 'status',
+          pull.merged
+            ? `${n === 1 ? 'Ein Objekt wurde' : `${n} Objekte wurden`} geprüft und übernommen. Danke!`
+            : `Die Einreichung von ${n === 1 ? 'einem Objekt' : `${n} Objekten`} wurde nicht übernommen. Du kannst sie überarbeiten und erneut einreichen.`,
+        )
+      } catch {
+        return // no connection or signed out: next time
+      }
     }
   }
 }

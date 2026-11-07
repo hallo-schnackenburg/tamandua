@@ -65,3 +65,20 @@ export function parseFilePath(path: string): { sha256: string; kind: 'original' 
   if (VARIANT_NAME.test(name)) return { sha256, kind: 'variant' }
   return null
 }
+
+const OBJECT_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/
+
+/** The ULID of an object as the path wants it (26 characters, Crockford base32), or null. */
+export function parseObjectId(id: string): string | null {
+  return OBJECT_ID.test(id) ? id : null
+}
+
+/**
+ * Where an object's YAML lives in the data repository: objects/<xx>/<id>.yaml. The first characters
+ * of a ULID are its creation time and nearly the same for all objects, so the folder is taken from
+ * the first two random characters (positions 11 and 12): even spread, a few dozen files per folder.
+ */
+export function objectPath(id: string): string {
+  if (!parseObjectId(id)) throw new Error(`not an object id (ULID): ${id}`)
+  return `objects/${id.slice(10, 12)}/${id}.yaml`
+}

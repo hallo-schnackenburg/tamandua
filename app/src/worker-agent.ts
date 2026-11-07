@@ -2,6 +2,7 @@
 // tool calls. The Worker holds the Anthropic key; the browser never sees it.
 
 import { stripFiles } from '@tamandua/core'
+import { jsonOf, request as call } from './api.js'
 import type { Agent, AgentRequest, ToolCall } from './agent.js'
 
 export class WorkerAgent implements Agent {
@@ -20,18 +21,12 @@ export class WorkerAgent implements Agent {
       history: request.history,
     }
 
-    let response: Response
-    try {
-      response = await fetch(`${this.#url}/chat`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-    } catch {
-      throw new Error('Der Server ist nicht erreichbar. Läuft der Worker (npm run dev:worker)?')
-    }
-
-    const data = (await response.json().catch(() => ({}))) as { calls?: ToolCall[]; error?: string }
+    const response = await call(`${this.#url}/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const data = await jsonOf<{ calls?: ToolCall[] }>(response)
     if (!response.ok || !data.calls) throw new Error(data.error ?? `Fehler ${response.status}`)
     return data.calls
   }

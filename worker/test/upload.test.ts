@@ -1,18 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
 import { handle, type Env } from '../src/index.js'
 import { MAX_FILE_BYTES } from '../src/upload.js'
+import { authEnv, cookieOf } from './support.js'
 
 const sha = '9f2c' + '0'.repeat(60)
 const original = `files/9f/2c/${sha}/original.tif`
 const preview = `files/9f/2c/${sha}/preview-400.abcdef012345.jpg`
+const cookie = await cookieOf()
 const env: Env = {
+  ...authEnv,
   ALLOWED_ORIGIN: 'http://localhost:5173',
   S3_ENDPOINT: 'https://nbg1.your-objectstorage.com',
   S3_BUCKET: 'archive',
   S3_ACCESS_KEY_ID: 'KEY',
   S3_SECRET_ACCESS_KEY: 'SECRET',
 }
-const post = (data: unknown) => new Request('http://worker/upload', { method: 'POST', body: typeof data === 'string' ? data : JSON.stringify(data) })
+const post = (data: unknown) => new Request('http://worker/upload', { method: 'POST', headers: { cookie }, body: typeof data === 'string' ? data : JSON.stringify(data) })
 const asFetch = (fn: unknown) => fn as typeof fetch
 const item = { path: original, mime: 'image/tiff', bytes: 1000 }
 
@@ -68,7 +71,7 @@ describe('POST /upload', () => {
   })
 
   it('says so when the storage is not set up or not reachable', async () => {
-    expect((await handle(post({ files: [item] }), { ALLOWED_ORIGIN: env.ALLOWED_ORIGIN }, asFetch(bucket()))).status).toBe(500)
+    expect((await handle(post({ files: [item] }), { ...authEnv, ALLOWED_ORIGIN: env.ALLOWED_ORIGIN }, asFetch(bucket()))).status).toBe(500)
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const down = vi.fn(async () => new Response(null, { status: 503 }))
     expect((await handle(post({ files: [item] }), env, asFetch(down))).status).toBe(502)

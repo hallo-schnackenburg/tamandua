@@ -3,6 +3,7 @@
 // without a Worker: it needs no network and can pretend a conflict or a failure.
 
 import type { FileEntry } from '@tamandua/core'
+import { jsonOf, request } from './api.js'
 
 export interface UploadResult {
   status: 'uploaded' | 'conflict'
@@ -79,17 +80,12 @@ export class S3Store implements FileStore {
   }
 
   async #plan(parts: Part[]): Promise<Map<string, Answer>> {
-    let response: Response
-    try {
-      response = await fetch(`${this.#url}/upload`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ files: parts.map((part) => ({ path: part.path, mime: part.mime, bytes: part.body.size })) }),
-      })
-    } catch {
-      throw new Error('Der Server ist nicht erreichbar. Läuft der Worker (npm run dev:worker)?')
-    }
-    const data = (await response.json().catch(() => ({}))) as { files?: Answer[]; error?: string }
+    const response = await request(`${this.#url}/upload`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ files: parts.map((part) => ({ path: part.path, mime: part.mime, bytes: part.body.size })) }),
+    })
+    const data = await jsonOf<{ files?: Answer[] }>(response)
     if (!response.ok || !data.files) throw new Error(data.error ?? `Fehler ${response.status}`)
     return new Map(data.files.map((answer) => [answer.path, answer]))
   }

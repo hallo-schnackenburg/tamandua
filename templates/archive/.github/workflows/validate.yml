@@ -1,0 +1,36 @@
+# Checks the objects of every pull request before they can be accepted.
+# Set this workflow's job ("validate") as a required check in the branch protection of main.
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Data
+        uses: actions/checkout@v4
+        with:
+          path: data
+
+      # The tool repository holds the schema and the validation code.
+      - name: Tool
+        uses: actions/checkout@v4
+        with:
+          repository: OWNER/tamandua
+          path: tool
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci --workspace core
+        working-directory: tool
+
+      - name: Validate
+        run: npx --yes tsx core/scripts/validate-data.ts ../data
+        working-directory: tool

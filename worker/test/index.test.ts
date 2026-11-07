@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { handle, type Env } from '../src/index.js'
+import { authEnv, cookieOf } from './support.js'
 
-const env: Env = { ANTHROPIC_API_KEY: 'sk-test', ALLOWED_ORIGIN: 'http://localhost:5173' }
+const env: Env = { ...authEnv, ANTHROPIC_API_KEY: 'sk-test', ALLOWED_ORIGIN: 'http://localhost:5173' }
+const cookie = await cookieOf()
 const body = { message: 'Foto', files: [{ name: 'a.jpg' }], objects: [], history: [] }
 
 const post = (data: unknown, path = '/chat') =>
-  new Request(`http://worker${path}`, { method: 'POST', body: typeof data === 'string' ? data : JSON.stringify(data) })
+  new Request(`http://worker${path}`, { method: 'POST', headers: { cookie }, body: typeof data === 'string' ? data : JSON.stringify(data) })
 
 const asFetch = (fn: unknown) => fn as typeof fetch
 const modelAnswer = (content: unknown[], status = 200) => vi.fn(async () => new Response(JSON.stringify({ content }), { status }))
@@ -91,6 +93,28 @@ describe('other requests', () => {
 
   it('knows no other route', async () => {
     expect((await handle(post(body, '/other'), env)).status).toBe(404)
-    expect((await handle(new Request('http://worker/chat'), env)).status).toBe(404)
+    expect((await handle(new Request('http://worker/chat', { headers: { cookie } }), env)).status).toBe(404)
+  })
+})
+
+describe('without a session', () => {
+  it('refuses everything but sign-in', async () => {
+    const fake = modelAnswer([])
+    const anonymous = new Request('http://worker/chat', { method: 'POST', body: JSON.stringify(body) })
+    const response = await handle(anonymous, env, asFetch(fake))
+    expect(response.status).toBe(401)
+    expect(fake).not.toHaveBeenCalled()
+    expect((await handle(new Request('http://worker/upload', { method: 'POST', body: '{}' }), env, asFetch(fake))).status).toBe(401)
+    expect((await handle(new Request('http://worker/repo/submit', { method: 'POST' }), env, asFetch(fake))).status).toBe(401)
+  })
+
+  it('refuses a cookie that was not made by the Worker', async () => {
+    const forged = new Request('http://worker/chat', { method: 'POST', headers: { cookie: 'tamandua_session=AAAAAAAAAAAAAAAAAAAAAAAA' }, body: JSON.stringify(body) })
+    expect((await handle(forged, env, asFetch(modelAnswer([])))).status).toBe(401)
+  })
+
+  it('also answers under /api', async () => {
+    const response = await handle(post(body, '/api/chat'), env, asFetch(modelAnswer([{ type: 'text', text: 'ok' }])))
+    expect(response.status).toBe(200)
   })
 })

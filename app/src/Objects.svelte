@@ -5,6 +5,14 @@
   import { colorOf, objectLabel } from './labels.js'
   import type { ObjectRecord, Workspace } from './workspace.svelte.js'
 
+  const STANDING = {
+    local: { label: 'nur hier', hint: 'Noch nicht in GitHub gesichert.' },
+    changed: { label: 'geändert', hint: 'Die letzte Änderung ist noch nicht in GitHub gesichert.' },
+    saved: { label: 'gesichert', hint: 'In GitHub gesichert, noch nicht eingereicht.' },
+    submitted: { label: 'eingereicht', hint: 'Wird geprüft.' },
+    merged: { label: 'übernommen', hint: 'Geprüft und ins Archiv übernommen.' },
+  } as const
+
   let { workspace: ws }: { workspace: Workspace } = $props()
 
   // The object of the file that was clicked last; its row is open, all others are closed.
@@ -75,6 +83,7 @@
           </span>
         </span>
         {#if info.problems > 0}<span class="problems">{info.problems} offen</span>{/if}
+        <span class="standing {ws.standing(object)}" title={STANDING[ws.standing(object)].hint}>{STANDING[ws.standing(object)].label}</span>
       </button>
       {#if open}
         <div class="body">
@@ -112,6 +121,9 @@
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title.empty { font-weight: 400; color: #999; }
   .sub { font-size: 0.78rem; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .standing { font-size: 0.72rem; color: #888; white-space: nowrap; border: 1px solid #ddd; border-radius: 10px; padding: 0 7px; }
+  .standing.saved, .standing.submitted { color: #36c; border-color: #b9c8ee; }
+  .standing.merged { color: #2a7a3b; border-color: #b5dcbd; }
   .problems { font-size: 0.78rem; color: #a11; white-space: nowrap; }
   .body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border-top: 1px solid #eee; }
   .issues { margin: 0; padding: 6px 10px; list-style: none; font-size: 0.9rem; border-top: 1px solid #eee; max-height: 8rem; overflow: auto; }
