@@ -47,7 +47,39 @@ export function parseSessionRef(data: unknown): SessionRef | Failure {
 export interface Saved {
   session: SessionRef
   files: { path: string; content: string }[]
+  /** What the commit message says about each object: a mark (+ new, ~ changed) and its title. */
+  notes: Note[]
+  /** The label of each removed path, for the commit message. */
+  removedLabels: Record<string, string>
   removals: string[]
+}
+
+export interface Note {
+  mark: '+' | '~' | '-'
+  label: string
+}
+
+/** The title of an object as its commit message line: the title from the YAML, or the end of its id. */
+function labelOf(id: string, title?: string | null): string {
+  const clean = (title ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^(["'])(.*)\1$/, '$2').trim()
+  return clean ? clean.slice(0, 120) : `Objekt ${id.slice(-6)}`
+}
+
+/**
+ * The commit message: the session and what happened, with one line per object in the text.
+ * One object is named in the first line; several are counted there.
+ */
+export function messageOf(session: string, notes: Note[]): string {
+  if (notes.length === 1) {
+    const subject = `${session}: ${notes[0].mark} ${notes[0].label}`
+    return subject.length > 72 ? `${subject.slice(0, 71)}…` : subject
+  }
+  const count = (mark: Note['mark'], word: string) => {
+    const n = notes.filter((x) => x.mark === mark).length
+    return n > 0 ? `${n} ${word}` : ''
+  }
+  const subject = `${session}: ${[count('+', 'neu'), count('~', 'geändert'), count('-', 'gelöscht')].filter(Boolean).join(', ')}`
+  return `${subject}\n\n${notes.map((n) => `${n.mark} ${n.label}`).join('\n')}`
 }
 
 /** A save request as the files to write and the paths to remove, or a failure to report. */
@@ -62,7 +94,8 @@ export function parseSave(data: unknown): Saved | Failure {
   }
   const files: Saved['files'] = []
   const seen = new Set<string>()
-  for (const item of objects as ({ id?: unknown; text?: unknown } | null)[]) {
+  const notes: Note[] = []
+  for (const item of objects as ({ id?: unknown; text?: unknown; change?: unknown } | null)[]) {
     const id = typeof item?.id === 'string' ? parseObjectId(item.id) : null
     const text = item?.text
     if (!id || typeof text !== 'string') return { error: 'An object needs an id (ULID) and its YAML text.', status: 400 }
@@ -73,16 +106,21 @@ export function parseSave(data: unknown): Saved | Failure {
     const inside = /^id:\s*([0-9A-Z]{26})\s*$/m.exec(text)?.[1]
     if (inside !== id) return { error: 'The id in the YAML does not match the object.', status: 400 }
     files.push({ path: objectPath(id), content: text.endsWith('\n') ? text : text + '\n' })
+    notes.push({ mark: item?.change === 'changed' ? '~' : '+', label: labelOf(id, /^title:[ \t]*(.*)$/m.exec(text)?.[1]) })
   }
   const removals: string[] = []
-  for (const raw of deleted) {
-    const id = typeof raw === 'string' ? parseObjectId(raw) : null
+  const removedLabels: Record<string, string> = {}
+  // A removed object is an id, or an id with its title (which the app remembers; the branch is not asked for it).
+  for (const raw of deleted as (string | { id?: unknown; title?: unknown } | null)[]) {
+    const rawId = typeof raw === 'string' ? raw : raw && typeof raw === 'object' ? raw.id : undefined
+    const id = typeof rawId === 'string' ? parseObjectId(rawId) : null
     if (!id) return { error: '"deleted" must list object ids (ULID).', status: 400 }
     if (seen.has(id)) return { error: 'An object is listed twice.', status: 400 }
     seen.add(id)
     removals.push(objectPath(id))
+    removedLabels[objectPath(id)] = labelOf(id, raw && typeof raw === 'object' && typeof raw.title === 'string' ? raw.title : undefined)
   }
-  return { session, files, removals }
+  return { session, files, removals, notes, removedLabels }
 }
 
 /** "Dachbodenfund Postkarten (Anna Beispiel, 07.11.2026, 23:47)": the session and when its pull request was opened, in Berlin time. */
@@ -121,15 +159,16 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
       if (data instanceof Response) return data
       const parsed = parseSave(data)
       if ('error' in parsed) return json({ error: parsed.error }, parsed.status)
-      const { session, files, removals } = parsed
+      const { session, files, removals, notes, removedLabels } = parsed
       const branch = branchOf(user.login, session.slug)
 
       // A pull request that is ready for review is frozen: the reviewer reads a fixed state.
       const existing = await repo.current(branch)
       if (existing && !existing.draft) return json({ error: 'The session was submitted and cannot be changed.', locked: true }, 409)
 
-      const parts = [files.length > 0 && `${files.length} ${files.length === 1 ? 'Objekt' : 'Objekte'}`, removals.length > 0 && `${removals.length} gelöscht`]
-      const commit = await repo.save(branch, files, removals, `Erfassung: ${parts.filter(Boolean).join(', ')}`)
+      const commit = await repo.save(branch, files, removals, (removed) =>
+        messageOf(session.name, [...notes, ...removed.map((path): Note => ({ mark: '-', label: removedLabels[path] }))]),
+      )
       // The pull request is a convenience: if it cannot be opened now, the save still counts.
       const pull =
         existing ??

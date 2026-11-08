@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { handle, type Env } from '../src/index.js'
-import { bodyOf, branchOf, parseSessionRef, titleOf } from '../src/repo.js'
+import { bodyOf, branchOf, messageOf, parseSessionRef, titleOf } from '../src/repo.js'
 import { authEnv, cookieOf, fakeGitHub } from './support.js'
 
 const env: Env = { ...authEnv }
@@ -26,7 +26,7 @@ describe('POST /repo/save', () => {
 
     expect(gh.state.refs[BRANCH]).toBe(commit)
     expect(gh.state.commits[commit].parents).toEqual(['c0']) // the branch started at main
-    expect(gh.state.commits[commit].message).toBe('Erfassung: 2 Objekte')
+    expect(gh.state.commits[commit].message).toBe('Dachbodenfund Postkarten: 2 neu\n\n+ Brief\n+ Brief')
     const tree = gh.state.trees[gh.state.commits[commit].tree]
     expect(tree.entries.map((e) => e.path)).toEqual([`objects/HJ/${ID_A}.yaml`, `objects/HJ/${ID_B}.yaml`])
     expect(tree.entries[0].content).toBe(text(ID_A))
@@ -48,7 +48,7 @@ describe('POST /repo/save', () => {
     const second = (await (await saveOf(gh, objects(ID_B))).json()) as { commit: string }
     expect(gh.state.commits[second.commit].parents).toEqual([first.commit])
     expect(gh.state.refs[BRANCH]).toBe(second.commit)
-    expect(gh.state.commits[second.commit].message).toBe('Erfassung: 1 Objekt')
+    expect(gh.state.commits[second.commit].message).toBe('Dachbodenfund Postkarten: + Brief')
   })
 
   it('makes no commit when the objects are what the branch has already', async () => {
@@ -57,7 +57,7 @@ describe('POST /repo/save', () => {
     const again = (await (await saveOf(gh, objects(ID_A))).json()) as { commit: string | null }
     expect(again.commit).toBeNull()
     expect(gh.state.refs[BRANCH]).toBe(first.commit)
-    expect(Object.keys(gh.state.commits).filter((c) => gh.state.commits[c].message.startsWith('Erfassung'))).toHaveLength(1)
+    expect(Object.keys(gh.state.commits).filter((c) => gh.state.commits[c].message.startsWith('Dachbodenfund'))).toHaveLength(1)
   })
 
   it('makes no branch when the objects are what main has already', async () => {
@@ -106,6 +106,45 @@ describe('POST /repo/save', () => {
   })
 })
 
+describe('the commit message', () => {
+  it('names the session and lists the titles, marked as new, changed or deleted', async () => {
+    const gh = fakeGitHub()
+    await saveOf(gh, { session, objects: [{ id: ID_A, text: text(ID_A, 'Karte vom Dachboden') }] })
+    const response = await saveOf(gh, {
+      session,
+      objects: [
+        { id: ID_A, text: text(ID_A, 'Karte vom Dachboden, 1930'), change: 'changed' },
+        { id: ID_B, text: text(ID_B, '"Prospekt: Ofen"'), change: 'new' },
+      ],
+    })
+    const { commit } = (await response.json()) as { commit: string }
+    expect(gh.state.commits[commit].message).toBe('Dachbodenfund Postkarten: 1 neu, 1 geändert\n\n~ Karte vom Dachboden, 1930\n+ Prospekt: Ofen')
+  })
+
+  it('takes the title of a deleted object from the request, and names it by its id if there is none', async () => {
+    const gh = fakeGitHub()
+    await saveOf(gh, objects(ID_A, ID_B))
+    const response = await saveOf(gh, { session, deleted: [{ id: ID_A, title: 'Brief von 1929' }, ID_B] })
+    const { commit } = (await response.json()) as { commit: string }
+    expect(gh.state.commits[commit].message).toBe(`Dachbodenfund Postkarten: 2 gelöscht\n\n- Brief von 1929\n- Objekt ${ID_B.slice(-6)}`)
+  })
+
+  it('leaves a deleted object out that was not on the branch', async () => {
+    const gh = fakeGitHub()
+    await saveOf(gh, objects(ID_A))
+    const response = await saveOf(gh, { session, objects: [{ id: ID_B, text: text(ID_B, 'Neu') }], deleted: [{ id: '01JABCDEFGHJKMNPQRSTVWXYZ2', title: 'Nie da' }] })
+    const { commit } = (await response.json()) as { commit: string }
+    expect(gh.state.commits[commit].message).toBe('Dachbodenfund Postkarten: + Neu')
+  })
+
+  it('shortens a long first line and keeps one line per object short of control characters', () => {
+    const long = messageOf('Sitzung', [{ mark: '+', label: 'x'.repeat(200) }])
+    expect(long.length).toBe(72)
+    expect(long.endsWith('…')).toBe(true)
+    expect(messageOf('S', [{ mark: '+', label: 'a' }, { mark: '~', label: 'b' }, { mark: '-', label: 'c' }])).toBe('S: 1 neu, 1 geändert, 1 gelöscht\n\n+ a\n~ b\n- c')
+  })
+})
+
 describe('deleting', () => {
   it('removes a file that is on the branch, in a commit of its own', async () => {
     const gh = fakeGitHub()
@@ -113,7 +152,7 @@ describe('deleting', () => {
     const response = await saveOf(gh, { session, deleted: [ID_A] })
     const { commit, deleted } = (await response.json()) as { commit: string; deleted: number }
     expect(deleted).toBe(1)
-    expect(gh.state.commits[commit].message).toBe('Erfassung: 1 gelöscht')
+    expect(gh.state.commits[commit].message).toBe(`Dachbodenfund Postkarten: - Objekt ${ID_A.slice(-6)}`)
     const tree = gh.state.trees[gh.state.commits[commit].tree]
     expect(tree.entries).toEqual([{ path: `objects/HJ/${ID_A}.yaml`, mode: '100644', type: 'blob', sha: null }])
     expect([...tree.paths]).toEqual([`objects/HJ/${ID_B}.yaml`])
@@ -123,7 +162,7 @@ describe('deleting', () => {
     const gh = fakeGitHub()
     await saveOf(gh, objects(ID_A))
     const { commit } = (await (await saveOf(gh, { session, objects: [{ id: ID_B, text: text(ID_B) }], deleted: [ID_A] })).json()) as { commit: string }
-    expect(gh.state.commits[commit].message).toBe('Erfassung: 1 Objekt, 1 gelöscht')
+    expect(gh.state.commits[commit].message).toBe(`Dachbodenfund Postkarten: 1 neu, 1 gelöscht\n\n+ Brief\n- Objekt ${ID_A.slice(-6)}`)
     expect([...gh.state.trees[gh.state.commits[commit].tree].paths]).toEqual([`objects/HJ/${ID_B}.yaml`])
   })
 

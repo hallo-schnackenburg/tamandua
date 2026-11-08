@@ -174,7 +174,8 @@ export class Repo {
    * removes the paths in `removals` that exist there. Returns the commit's hash, or null if there was
    * nothing to change. If someone else moved the branch meanwhile, it is tried once more.
    */
-  async save(branch: string, files: RepoFile[], removals: string[], message: string): Promise<string | null> {
+  /** `message` may be made from the paths that were really removed (those that were not there are left out). */
+  async save(branch: string, files: RepoFile[], removals: string[], message: string | ((removed: string[]) => string)): Promise<string | null> {
     for (let attempt = 0; ; attempt++) {
       const head = await this.head(branch)
       let from = head
@@ -197,7 +198,7 @@ export class Repo {
       // Nothing differs from what is there: no commit (and no branch that would only point at the base).
       if (tree.sha === parent.tree.sha) return null
       if (!head) await this.call('POST', '/git/refs', { ref: `refs/heads/${branch}`, sha: from })
-      const commit = await this.call<{ sha: string }>('POST', '/git/commits', { message, tree: tree.sha, parents: [from] })
+      const commit = await this.call<{ sha: string }>('POST', '/git/commits', { message: typeof message === 'function' ? message(gone) : message, tree: tree.sha, parents: [from] })
       try {
         await this.call('PATCH', `/git/refs/heads/${branch}`, { sha: commit.sha })
         return commit.sha

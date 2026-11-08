@@ -11,7 +11,7 @@ import { prepareFile } from './prepare.js'
 import { newObjectText } from './template.js'
 import type { FileStore } from './uploader.js'
 import { SignedOut } from './api.js'
-import { Locked, type Backend, type SessionRef, type User } from './backend.js'
+import { Locked, type Backend, type Removed, type SessionRef, type User } from './backend.js'
 
 /** A file that was dropped and hashed. It is identified by its SHA-256. */
 export interface FileRecord {
@@ -57,7 +57,7 @@ export interface Session {
   url?: string
   createdAt: number
   /** Objects deleted here that may still be on the branch: removed from it with the next save. */
-  deleted: string[]
+  deleted: Removed[]
 }
 
 /** Where an object stands, for the badge on its row. */
@@ -326,6 +326,8 @@ export class Workspace {
         }
       }
       this.files = files.sort((a, b) => a.addedAt - b.addedAt)
+      // Deletions saved before titles were remembered are plain ids.
+      for (const session of sessions) session.deleted = (session.deleted as (string | Removed)[]).map((d) => (typeof d === 'string' ? { id: d } : d))
       this.sessions = sessions.sort((a, b) => a.createdAt - b.createdAt)
       this.objects = objects
       this.#adopt()
@@ -765,7 +767,8 @@ export class Workspace {
       // If it is on the branch (or on its way there), the next save removes it from there.
       const session = this.#sessionOf(object)
       if (session && (object.synced !== undefined || this.#syncing)) {
-        session.deleted.push(object.id)
+        const title = readField(object.text, 'title')
+        session.deleted.push({ id: object.id, title: typeof title === 'string' ? title : undefined })
         this.#dirtySessions.add(session.id)
       }
       lines.push(`Objekt ${object.number} hat keine Dateien mehr und wurde gelöscht.`)
@@ -1185,12 +1188,12 @@ export class Workspace {
     try {
       for (const { session, todo, deleted } of work) {
         try {
-          const pull = await this.#backend.save(this.#ref(session), todo.map(({ object, text }) => ({ id: object.id, text })), deleted)
+          const pull = await this.#backend.save(this.#ref(session), todo.map(({ object, text }) => ({ id: object.id, text, change: object.synced === undefined ? ('new' as const) : ('changed' as const) })), deleted)
           for (const { object, text } of todo) {
             object.synced = text
             this.#dirtyObjects.add(object.id)
           }
-          session.deleted = session.deleted.filter((id) => !deleted.includes(id))
+          session.deleted = session.deleted.filter((entry) => !deleted.some((d) => d.id === entry.id))
           if (pull) {
             session.pull = pull.number
             session.url = pull.url

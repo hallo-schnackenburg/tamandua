@@ -26,6 +26,19 @@ export interface SessionRef {
   name: string
 }
 
+/** An object as it is sent: whether the branch has it already decides the mark in the commit message. */
+export interface SavedObject {
+  id: string
+  text: string
+  change: 'new' | 'changed'
+}
+
+/** A deleted object; its title is for the commit message (the app remembers it, the branch is not asked). */
+export interface Removed {
+  id: string
+  title?: string
+}
+
 /** The pull request of the session is no longer a draft: it was submitted, nothing may be added to it. */
 export class Locked extends Error {
   constructor() {
@@ -40,7 +53,7 @@ export interface Backend {
    * Puts the objects (id and YAML text) into one commit on the session's branch and removes the deleted
    * ones from it. Returns the pull request of the session, if there is one. Throws `Locked` if it was submitted.
    */
-  save(session: SessionRef, objects: { id: string; text: string }[], deleted: string[]): Promise<Pull | undefined>
+  save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<Pull | undefined>
   /** Marks the pull request of the session as ready for review. */
   submit(session: SessionRef): Promise<Pull>
   /** Gives the pull request of the session its new name, if it has one. */
@@ -72,7 +85,7 @@ export class HttpBackend implements Backend {
     return (await response.json()) as User
   }
 
-  async save(session: SessionRef, objects: { id: string; text: string }[], deleted: string[]): Promise<Pull | undefined> {
+  async save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<Pull | undefined> {
     let pull: Pull | undefined
     for (let o = 0, d = 0; o < objects.length || d < deleted.length; o += MAX_PER_SAVE, d += MAX_PER_SAVE) {
       const response = await request(`${this.#url}/repo/save`, {
@@ -153,7 +166,7 @@ export class FakeBackend implements Backend {
     return this.#signedIn ? { login: 'test', name: 'Test Person', avatar: '', role: 'write' } : undefined
   }
 
-  async save(session: SessionRef, objects: { id: string; text: string }[], deleted: string[]): Promise<Pull | undefined> {
+  async save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<Pull | undefined> {
     await sleep(150)
     if (this.submitted.has(session.slug) && !this.closed) throw new Locked()
     if (objects.some((o) => /failsave/.test(o.text))) throw new Error('Speichern fehlgeschlagen (Test).')
@@ -166,7 +179,7 @@ export class FakeBackend implements Backend {
     this.branches.set(session.slug, branch)
     this.names.set(session.slug, session.name)
     for (const o of objects) branch.set(o.id, o.text)
-    for (const id of deleted) branch.delete(id)
+    for (const { id } of deleted) branch.delete(id)
     return branch.size > 0 || objects.length > 0 ? this.#pullOf(session.slug) : undefined
   }
 
