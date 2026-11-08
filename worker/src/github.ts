@@ -158,25 +158,44 @@ export class Repo {
     }
   }
 
+  /** Whether the path exists in the tree of the commit. */
+  private async exists(path: string, commit: string): Promise<boolean> {
+    try {
+      await this.call('GET', `/contents/${path}?ref=${commit}`)
+      return true
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 404) return false
+      throw error
+    }
+  }
+
   /**
-   * Puts the files into one commit on the branch (created from the base branch if it does not exist).
-   * Returns the commit's hash. If someone else moved the branch meanwhile, it is tried once more.
+   * Puts the files into one commit on the branch (created from the base branch if it does not exist) and
+   * removes the paths in `removals` that exist there. Returns the commit's hash, or null if there was
+   * nothing to change. If someone else moved the branch meanwhile, it is tried once more.
    */
-  async save(branch: string, files: RepoFile[], message: string): Promise<string> {
+  async save(branch: string, files: RepoFile[], removals: string[], message: string): Promise<string | null> {
     for (let attempt = 0; ; attempt++) {
-      let head = await this.head(branch)
-      if (!head) {
-        const base = await this.head(this.base)
-        if (!base) throw new GitHubError(`The branch ${this.base} does not exist.`, 404)
-        await this.call('POST', '/git/refs', { ref: `refs/heads/${branch}`, sha: base })
-        head = base
+      const head = await this.head(branch)
+      let from = head
+      if (!from) {
+        from = await this.head(this.base)
+        if (!from) throw new GitHubError(`The branch ${this.base} does not exist.`, 404)
       }
-      const parent = await this.call<{ tree: { sha: string } }>('GET', `/git/commits/${head}`)
+      const gone: string[] = []
+      for (const path of removals) if (await this.exists(path, from)) gone.push(path)
+      if (files.length === 0 && gone.length === 0) return null
+
+      if (!head) await this.call('POST', '/git/refs', { ref: `refs/heads/${branch}`, sha: from })
+      const parent = await this.call<{ tree: { sha: string } }>('GET', `/git/commits/${from}`)
       const tree = await this.call<{ sha: string }>('POST', '/git/trees', {
         base_tree: parent.tree.sha,
-        tree: files.map((file) => ({ path: file.path, mode: '100644', type: 'blob', content: file.content })),
+        tree: [
+          ...files.map((file) => ({ path: file.path, mode: '100644', type: 'blob', content: file.content })),
+          ...gone.map((path) => ({ path, mode: '100644', type: 'blob', sha: null })),
+        ],
       })
-      const commit = await this.call<{ sha: string }>('POST', '/git/commits', { message, tree: tree.sha, parents: [head] })
+      const commit = await this.call<{ sha: string }>('POST', '/git/commits', { message, tree: tree.sha, parents: [from] })
       try {
         await this.call('PATCH', `/git/refs/heads/${branch}`, { sha: commit.sha })
         return commit.sha
@@ -185,6 +204,20 @@ export class Repo {
         if (!raced || attempt >= 1) throw error
       }
     }
+  }
+
+  /** The open pull request of the branch, draft or not. */
+  async current(branch: string): Promise<Pull | undefined> {
+    const open = await this.openPull(branch)
+    return open ? Repo.view(open) : undefined
+  }
+
+  /** Gives the open pull request of the branch a new title and text. Returns nothing if there is none. */
+  async rename(branch: string, title: string, body: string): Promise<Pull | undefined> {
+    const open = await this.openPull(branch)
+    if (!open) return undefined
+    await this.call('PATCH', `/pulls/${open.number}`, { title, body })
+    return Repo.view(open)
   }
 
   private async openPull(branch: string): Promise<OpenPull | undefined> {

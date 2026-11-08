@@ -16,6 +16,17 @@ describe('valid objects', () => {
   it('accepts a multi-page letter', () => expect(validateObject(letter())).toEqual([]))
 })
 
+describe('original_name', () => {
+  it('may name the file the way it was captured', () => {
+    expect(messages(photo(), (o) => (o.files[0].original_name = 'DJI_20260105143012_0001_D.JPG'))).toEqual([])
+  })
+
+  it('is not empty and not a number', () => {
+    expect(messages(photo(), (o) => (o.files[0].original_name = '')).length).toBeGreaterThan(0)
+    expect(messages(photo(), (o) => (o.files[0].original_name = 5)).length).toBeGreaterThan(0)
+  })
+})
+
 describe('image', () => {
   it('needs exactly one file', () => {
     expect(messages(photo(), (o) => o.files.push(file('main', 'e'))).length).toBeGreaterThan(0)

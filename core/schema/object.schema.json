@@ -133,6 +133,7 @@
       "properties": {
         "role": { "description": "Role of the file within the object (restricted per type).", "type": "string" },
         "num": { "description": "Position, for multi-part objects.", "type": "integer", "minimum": 1 },
+        "original_name": { "description": "The name the file had when it was captured (e.g. the scanner's or camera's file name), kept to trace it back.", "type": "string", "minLength": 1 },
         "path": {
           "description": "Path in the object store, relative to the store root: files/<sha[0,2]>/<sha[2,2]>/<sha>/original.<ext>. Must match sha256 (checked by checkConsistency).",
           "type": "string",

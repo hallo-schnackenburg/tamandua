@@ -4,6 +4,7 @@
   import Chat from './Chat.svelte'
   import Files from './Files.svelte'
   import Objects from './Objects.svelte'
+  import Sessions from './Sessions.svelte'
   import { FakeAgent } from './agent.js'
   import { WorkerAgent } from './worker-agent.js'
   import { FakeStore, S3Store } from './uploader.js'
@@ -84,18 +85,19 @@
 </script>
 
 <main>
-  {#if ws.session.state === 'user'}
-    {@const user = ws.session.user}
+  {#if ws.login.state === 'user'}
+    {@const user = ws.login.user}
     <header>
       <strong class="brand">Tamandua</strong>
+      <Sessions workspace={ws} />
       <span class="sync" class:failed={ws.syncState === 'failed'} role="status">
         {#if ws.syncState === 'failed'}
           Noch nicht in GitHub gesichert{ws.syncError ? `: ${ws.syncError}` : ''}
         {:else if ws.syncState === 'saving'}
           Wird gesichert …
-        {:else if ws.objects.some((o) => o.text !== o.synced)}
+        {:else if ws.unsaved.length > 0}
           Änderungen werden gleich gesichert
-        {:else if ws.objects.length > 0}
+        {:else if ws.shown.length > 0 && ws.current?.state === 'open'}
           Alles gesichert
         {/if}
       </span>
@@ -105,13 +107,13 @@
       <span class="spacer"></span>
       {#if confirming}
         <span class="confirm">
-          {ws.outgoing.length === 1 ? 'Ein Objekt' : `${ws.outgoing.length} Objekte`} einreichen?
+          Sitzung „{ws.current?.name}“ einreichen?
           <button class="primary" onclick={() => { confirming = false; void ws.submit() }}>Ja, einreichen</button>
           <button onclick={() => (confirming = false)}>Abbrechen</button>
         </span>
       {:else}
-        <button class="primary" disabled={ws.outgoing.length === 0 || ws.submitting} onclick={() => (confirming = true)}>
-          {ws.submitting ? 'Wird eingereicht …' : ws.outgoing.length > 0 ? `${ws.outgoing.length} einreichen` : 'Einreichen'}
+        <button class="primary" disabled={ws.current?.state !== 'open' || ws.shown.length === 0 || ws.submitting} onclick={() => (confirming = true)}>
+          {ws.submitting ? 'Wird eingereicht …' : 'Einreichen'}
         </button>
       {/if}
       <span class="user">
@@ -141,35 +143,41 @@
       <section class="pane">
         <h2>
           Objekte
-          {#if ws.merged.length > 0}
-            <span class="clean">
+        </h2>
+        {#if ws.current && ws.current.state !== 'open'}
+          {@const session = ws.current}
+          <p class="banner {session.state}" role="status">
+            {#if session.state === 'submitted'}
+              Diese Sitzung ist eingereicht und wird geprüft. Sie kann hier nicht mehr geändert werden.
+              {#if session.url}<a href={session.url} target="_blank" rel="noreferrer">Auf GitHub ansehen</a>{/if}
+            {:else}
+              Diese Sitzung ist ins Archiv übernommen.
+              {#if session.url}<a href={session.url} target="_blank" rel="noreferrer">Auf GitHub ansehen</a>{/if}
               {#if cleaning}
-                {ws.merged.length === 1 ? 'Ein übernommenes Objekt' : `${ws.merged.length} übernommene Objekte`} entfernen?
-                <button class="link" onclick={() => { cleaning = false; ws.removeMerged() }}>Ja, entfernen</button>
+                Aus der Ansicht entfernen?
+                <button class="link" onclick={() => { cleaning = false; ws.removeSession(session.id) }}>Ja, entfernen</button>
                 <button class="link" onclick={() => (cleaning = false)}>Abbrechen</button>
               {:else}
-                <button class="link" title="Nimmt die ins Archiv übernommenen Objekte aus dieser Ansicht. Im Archiv bleiben sie." onclick={() => (cleaning = true)}>
-                  Übernommene entfernen ({ws.merged.length})
-                </button>
+                <button class="link" title="Nimmt die Sitzung aus dieser Ansicht. Im Archiv bleibt sie." onclick={() => (cleaning = true)}>Aus der Ansicht entfernen</button>
               {/if}
-            </span>
-          {/if}
-        </h2>
+            {/if}
+          </p>
+        {/if}
         <Objects workspace={ws} />
       </section>
     </div>
-  {:else if ws.session.state === 'loading'}
+  {:else if ws.login.state === 'loading'}
     <div class="welcome"><p class="quiet">Einen Moment …</p></div>
   {:else}
     <div class="welcome">
       <h1>Tamandua</h1>
       <p>Hier erfasst du Objekte des Archivs.</p>
-      {#if ws.session.state === 'anonymous'}
-        {#if ws.session.notice}<p class="notice">{ws.session.notice}</p>{/if}
+      {#if ws.login.state === 'anonymous'}
+        {#if ws.login.notice}<p class="notice">{ws.login.notice}</p>{/if}
         <a class="primary button" href={ws.loginUrl}>Mit GitHub anmelden</a>
         {#if ws.objects.length > 0}<p class="quiet">Deine bisherige Arbeit auf diesem Gerät bleibt erhalten.</p>{/if}
       {:else}
-        <p class="notice">{ws.session.message}</p>
+        <p class="notice">{ws.login.message}</p>
         <button class="primary" onclick={() => ws.refreshSession()}>Noch einmal versuchen</button>
       {/if}
     </div>
@@ -195,7 +203,9 @@
   .welcome p { margin: 0; }
   .button { display: inline-block; padding: 8px 16px; border-radius: 6px; text-decoration: none; }
   .notice { color: #a11; }
-  .clean { margin-left: auto; font-size: 0.8rem; font-weight: 400; color: #777; display: inline-flex; align-items: center; gap: 6px; }
+  .banner { margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; font-size: 0.85rem; background: #eef2fb; color: #345; }
+  .banner.merged { background: #edf7ef; }
+  .banner a { color: #36c; margin: 0 4px; }
   .quiet { color: #888; font-size: 0.9rem; }
   .panes { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1.6fr); /* minmax(0, …): long YAML lines must not widen the pane */ gap: 12px; min-height: 0; }
   /* The hint of an empty pane: centered below the heading, on the same height in every pane. */

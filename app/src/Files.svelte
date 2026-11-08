@@ -53,7 +53,7 @@
   }
 
   function onpointerdown(event: PointerEvent, file: FileRecord) {
-    if (event.button !== 0) return
+    if (event.button !== 0 || ws.foreign(file)) return
     const node = event.currentTarget as HTMLElement
     const size = node.getBoundingClientRect()
     const grab = { x: event.clientX - size.left, y: event.clientY - size.top }
@@ -167,7 +167,7 @@
   }}
   {ondrop}
 >
-  {#if ws.files.length === 0 && ws.pending.length === 0}
+  {#if ws.visibleFiles.length === 0 && ws.pending.length === 0}
     <label class="hint empty-state">
       <span>Dateien hierher ziehen</span>
       <small>oder klicken zum Auswählen</small>
@@ -175,7 +175,7 @@
     </label>
   {:else}
     <div class="grid">
-      {#each ws.files as file (file.sha256)}
+      {#each ws.visibleFiles as file (file.sha256)}
         {@const object = file.objectId ? objectsById.get(file.objectId) : undefined}
         {@const color = object ? colorOf(object.number) : undefined}
         <div
@@ -184,10 +184,11 @@
           tabindex="0"
           class:selected={selected.has(file.sha256)}
           class:assigned={!!object}
+          class:foreign={ws.foreign(file)}
           class:dragged={ws.dragging.includes(file.sha256)}
           class:failed={file.status === 'error' || file.status === 'conflict'}
           style:--color={color}
-          title={file.name}
+          title={ws.foreign(file) ? `${file.name} (gehört zu einer anderen Sitzung)` : file.name}
           ondragstart={(event) => event.preventDefault()}
           onpointerdown={(event) => onpointerdown(event, file)}
           onclick={(event) => ws.select(file.sha256, { range: event.shiftKey, toggle: event.metaKey || event.ctrlKey })}
@@ -257,6 +258,7 @@
   .tile.assigned { border-color: var(--color); }
   .tile.selected { background: #dbe7fd; }
   .tile.dragged { opacity: 0.5; }
+  .tile.foreign { opacity: 0.35; cursor: default; }
   .tile.pending { cursor: default; }
   .tile.failed { border-color: #c92a2a; }
   .tile img, .noimg { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; background: #e9e9e9; }

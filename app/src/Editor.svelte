@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { EditorView, basicSetup } from 'codemirror'
+  import { Compartment, EditorState } from '@codemirror/state'
   import { yaml } from '@codemirror/lang-yaml'
   import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
   import { tags } from '@lezer/highlight'
@@ -43,13 +44,19 @@
     { decorations: (plugin) => plugin.decorations },
   )
 
+  // Whether the text can be changed is switched on the running editor: a session can be submitted while its object is open.
+  const locking = new Compartment()
+  const lock = (frozen: boolean) => [EditorState.readOnly.of(frozen), EditorView.editable.of(!frozen)]
+
   interface Props {
     value: string
     diagnostics: Diagnostic[]
     onchange: (text: string) => void
+    /** A submitted session is frozen: the text can be read and selected, not changed. */
+    readonly?: boolean
   }
 
-  let { value, diagnostics, onchange }: Props = $props()
+  let { value, diagnostics, onchange, readonly = false }: Props = $props()
 
   let host: HTMLDivElement
   // $state.raw: effects below re-run when the editor exists, but its insides are not tracked.
@@ -66,6 +73,7 @@
         syntaxHighlighting(quiet),
         EditorView.lineWrapping, // long texts (description, notes) wrap instead of running off to the right
         filesPlugin,
+        locking.of(lock(readonly)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onchange(update.state.doc.toString())
         }),
@@ -79,6 +87,10 @@
   $effect(() => {
     if (!view || value === view.state.doc.toString()) return
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
+  })
+
+  $effect(() => {
+    view?.dispatch({ effects: locking.reconfigure(lock(readonly)) })
   })
 
   // Runs again whenever `diagnostics` changes: hand the new markers to the editor.

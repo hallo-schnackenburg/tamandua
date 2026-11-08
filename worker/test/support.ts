@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import { seal, SESSION_COOKIE, type Session } from '../src/session.js'
+import { seal, SESSION_COOKIE, type Auth } from '../src/session.js'
 
 export const SECRET = 'test-secret-test-secret-test-secret'
 
@@ -13,7 +13,7 @@ export const authEnv = {
   APP_URL: 'http://localhost:5173',
 }
 
-export const anna: Session = {
+export const anna: Auth = {
   login: 'anna',
   name: 'Anna Beispiel',
   avatar: 'https://avatars.example/anna',
@@ -25,7 +25,7 @@ export const anna: Session = {
 }
 
 /** The Cookie header of a signed-in person. */
-export async function cookieOf(session: Session = anna): Promise<string> {
+export async function cookieOf(session: Auth = anna): Promise<string> {
   return `${SESSION_COOKIE}=${await seal(session, SECRET)}`
 }
 
@@ -41,8 +41,8 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
   const state = {
     refs: { main: 'c0' } as Record<string, string>,
     commits: { c0: { tree: 't0', parents: [] as string[], message: 'start' } } as Record<string, { tree: string; parents: string[]; message: string }>,
-    trees: {} as Record<string, { base: string; entries: { path: string; content: string }[] }>,
-    pulls: [] as { number: number; head: string; state: 'open' | 'closed'; merged: boolean; draft: boolean; title: string }[],
+    trees: {} as Record<string, { base: string; entries: { path: string; content?: string; sha?: string | null }[]; paths: Set<string> }>,
+    pulls: [] as { number: number; head: string; state: 'open' | 'closed'; merged: boolean; draft: boolean; title: string; body: string }[],
     calls: [] as Call[],
     revoked: 0,
     patchFailures: options.patchFailures ?? 0,
@@ -84,6 +84,11 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
 
     let m: RegExpExecArray | null
     if ((m = /^\/git\/ref\/heads\/(.+)$/.exec(path))) return m[1] in state.refs ? reply({ object: { sha: state.refs[m[1]] } }) : reply({ message: 'Not Found' }, 404)
+    if ((m = /^\/contents\/(.+)$/.exec(path))) {
+      const ref = url.searchParams.get('ref') ?? ''
+      const tree = state.trees[state.commits[ref]?.tree]
+      return tree?.paths.has(m[1]) ? reply({ path: m[1] }) : reply({ message: 'Not Found' }, 404)
+    }
     if (path === '/git/refs' && method === 'POST') {
       state.refs[body.ref.replace('refs/heads/', '')] = body.sha
       return reply({}, 201)
@@ -91,7 +96,10 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     if ((m = /^\/git\/commits\/(.+)$/.exec(path))) return reply({ tree: { sha: state.commits[m[1]].tree } })
     if (path === '/git/trees') {
       const sha = `t${state.next++}`
-      state.trees[sha] = { base: body.base_tree, entries: body.tree }
+      // What the tree contains: the base tree's paths, plus the written ones, minus the removed ones.
+      const paths = new Set(state.trees[body.base_tree]?.paths ?? [])
+      for (const entry of body.tree) entry.sha === null ? paths.delete(entry.path) : paths.add(entry.path)
+      state.trees[sha] = { base: body.base_tree, entries: body.tree, paths }
       return reply({ sha }, 201)
     }
     if (path === '/git/commits') {
@@ -113,9 +121,16 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     }
     if (path === '/pulls' && method === 'POST') {
       if (options.emptyPull) return reply({ message: 'Validation Failed' }, 422)
-      const pull = { number: state.next++, head: body.head, state: 'open' as const, merged: false, draft: body.draft === true, title: body.title }
+      const pull = { number: state.next++, head: body.head, state: 'open' as const, merged: false, draft: body.draft === true, title: body.title, body: body.body }
       state.pulls.push(pull)
       return reply({ number: pull.number, node_id: `PR_${pull.number}`, draft: pull.draft, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}` }, 201)
+    }
+    if ((m = /^\/pulls\/(\d+)$/.exec(path)) && method === 'PATCH') {
+      const pull = state.pulls.find((p) => p.number === Number(m![1]))
+      if (!pull) return reply({ message: 'Not Found' }, 404)
+      pull.title = body.title
+      pull.body = body.body
+      return reply({ number: pull.number })
     }
     if ((m = /^\/pulls\/(\d+)$/.exec(path))) {
       const pull = state.pulls.find((p) => p.number === Number(m![1]))

@@ -2,25 +2,27 @@
 // nothing: the files that were dropped (hash, name, preview, upload state) and the
 // objects (YAML text). The original files themselves are not kept.
 
-import type { ChatMessage, FileRecord, ObjectRecord } from './workspace.svelte.js'
+import type { ChatMessage, FileRecord, ObjectRecord, Session } from './workspace.svelte.js'
 
 const DB_NAME = 'tamandua'
 const FILES = 'files'
 const OBJECTS = 'objects'
 const CHAT = 'chat' // one record, {id: 'log', messages: [...]}
+const SESSIONS = 'sessions'
 const META = 'meta' // what the user was looking at, one record {id: 'ui', ...}
 
 let opened: Promise<IDBDatabase> | undefined
 
 function database(): Promise<IDBDatabase> {
   opened ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 4)
+    const request = indexedDB.open(DB_NAME, 5)
     request.onupgradeneeded = () => {
       const db = request.result
       if (db.objectStoreNames.contains('drafts')) db.deleteObjectStore('drafts') // version 1, dropped
       if (!db.objectStoreNames.contains(FILES)) db.createObjectStore(FILES, { keyPath: 'sha256' })
       if (!db.objectStoreNames.contains(OBJECTS)) db.createObjectStore(OBJECTS, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(CHAT)) db.createObjectStore(CHAT, { keyPath: 'id' })
+      if (!db.objectStoreNames.contains(SESSIONS)) db.createObjectStore(SESSIONS, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: 'id' })
     }
     request.onsuccess = () => {
@@ -53,13 +55,17 @@ export async function save(
   removedObjects: string[] = [],
   ui?: UiState,
   removedFiles: string[] = [],
+  sessions: Session[] = [],
+  removedSessions: string[] = [],
 ): Promise<void> {
   const db = await database()
-  const transaction = db.transaction([FILES, OBJECTS, CHAT, META], 'readwrite')
+  const transaction = db.transaction([FILES, OBJECTS, CHAT, META, SESSIONS], 'readwrite')
   for (const file of files) transaction.objectStore(FILES).put(file)
   for (const object of objects) transaction.objectStore(OBJECTS).put(object)
   for (const id of removedObjects) transaction.objectStore(OBJECTS).delete(id)
   for (const sha of removedFiles) transaction.objectStore(FILES).delete(sha)
+  for (const session of sessions) transaction.objectStore(SESSIONS).put(session)
+  for (const id of removedSessions) transaction.objectStore(SESSIONS).delete(id)
   if (chat) transaction.objectStore(CHAT).put({ id: 'log', messages: chat })
   if (ui) transaction.objectStore(META).put({ id: 'ui', ...ui })
   await done(transaction)
@@ -95,6 +101,8 @@ export interface UiState {
   selection: string[]
   /** SHA-256 of the file whose object was open. */
   active?: string
+  /** The session that was open. */
+  session?: string
 }
 
 export async function loadUi(): Promise<UiState | undefined> {
@@ -107,6 +115,7 @@ export async function loadUi(): Promise<UiState | undefined> {
 }
 
 export const loadFiles = () => readAll<FileRecord>(FILES)
+export const loadSessions = () => readAll<Session>(SESSIONS)
 export const loadObjects = () => readAll<ObjectRecord>(OBJECTS)
 
 export async function loadChat(): Promise<ChatMessage[]> {

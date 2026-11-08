@@ -11,7 +11,7 @@ import { prepareFile } from './prepare.js'
 import { newObjectText } from './template.js'
 import type { FileStore } from './uploader.js'
 import { SignedOut } from './api.js'
-import type { Backend, User } from './backend.js'
+import { Locked, type Backend, type SessionRef, type User } from './backend.js'
 
 /** A file that was dropped and hashed. It is identified by its SHA-256. */
 export interface FileRecord {
@@ -33,22 +33,37 @@ export interface FileRecord {
 
 export interface ObjectRecord {
   id: string
-  /** Running number, shown on the tiles together with the object's color. */
+  /** Running number within its session, shown on the tiles together with the object's color. */
   number: number
   text: string
   updatedAt: number
-  /** The text as it is on the person's branch in the data repository; none if it never got there. */
+  /** The session (work unit) the object belongs to; one session is one branch and one pull request. */
+  sessionId: string
+  /** The text as it is on the session's branch in the data repository; none if it never got there. */
   synced?: string
-  /** What happened to the saved text since: it waits on the branch, is in a pull request, or was accepted. */
-  stage?: 'saved' | 'submitted' | 'merged'
-  /** The pull request it is part of, while `stage` is `submitted`. */
+}
+
+/**
+ * A named unit of work: one branch and one pull request in the data repository. `id` is the slug that the
+ * branch is named after. Open sessions take changes; a submitted session is frozen (its pull request is
+ * under review); a merged one is part of the archive.
+ */
+export interface Session {
+  id: string
+  name: string
+  state: 'open' | 'submitted' | 'merged'
+  /** The pull request, once there is one. */
   pull?: number
+  url?: string
+  createdAt: number
+  /** Objects deleted here that may still be on the branch: removed from it with the next save. */
+  deleted: string[]
 }
 
 /** Where an object stands, for the badge on its row. */
 export type Standing = 'local' | 'changed' | 'saved' | 'submitted' | 'merged'
 
-export type Session =
+export type Login =
   | { state: 'loading' }
   | { state: 'anonymous'; notice?: string }
   | { state: 'user'; user: User }
@@ -97,6 +112,8 @@ interface Batch {
   unreadable: string[]
   /** Why uploads failed, for the message to the user. */
   reasons: string[]
+  /** Duplicates that belong to a session other than the shown one: file name and session name. */
+  elsewhere: { name: string; session: string }[]
   listedTold?: boolean
   doneTold?: boolean
   /** Files dropped onto an object also go into it. */
@@ -149,6 +166,30 @@ const round = (x: number): number => Math.round(x * 1e6) / 1e6
 
 const PRECISION_NAMES: Record<string, string> = { exact: 'genau', street: 'auf die Straße genau', town: 'auf den Ort genau', region: 'nur ungefähr' }
 
+/** "Dachbodenfund Postkarten" → "dachbodenfund-postkarten-4k2x": the part of the branch name that identifies a session. */
+export function slugify(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '')
+  const random = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => (b % 36).toString(36)).join('')
+  return `${base || 'sitzung'}-${random}`
+}
+
+/** The name of the session that is made on its own, when the first object is created. */
+const defaultName = (): string =>
+  `Erfassung vom ${new Date().toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric' })}`
+
+const cleanName = (name: string): string => name.replace(/\s+/g, ' ').trim().slice(0, 100)
+
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'de', { numeric: true })
 
 export class Workspace {
@@ -172,7 +213,12 @@ export class Workspace {
   /** The object whose row is under the dragged tiles, if any. */
   dragTarget = $state<string>()
 
-  session = $state<Session>({ state: 'loading' })
+  /** The work sessions, and the one that is shown. */
+  sessions = $state<Session[]>([])
+  currentId = $state<string>()
+
+  /** Who is signed in. */
+  login = $state<Login>({ state: 'loading' })
   /** Saving to GitHub: `failed` is shown to the person, with the reason in `syncError`. */
   syncState = $state<'idle' | 'saving' | 'failed'>('idle')
   syncError = $state<string>()
@@ -193,6 +239,8 @@ export class Workspace {
   #dirtyFiles = new Set<string>()
   #dirtyObjects = new Set<string>()
   #removedObjects = new Set<string>()
+  #dirtySessions = new Set<string>()
+  #removedSessions = new Set<string>()
   #dirtyChat = false
   #dirtyUi = false
   #timer: ReturnType<typeof setTimeout> | undefined
@@ -214,9 +262,60 @@ export class Workspace {
     return file?.objectId ? this.objects.find((o) => o.id === file.objectId) : undefined
   }
 
+  /** The session that is shown. */
+  get current(): Session | undefined {
+    return this.sessions.find((s) => s.id === this.currentId)
+  }
+
+  /** The objects of the shown session. */
+  get shown(): ObjectRecord[] {
+    return this.objects.filter((o) => o.sessionId === this.currentId)
+  }
+
+  /** Objects that are not saved to GitHub yet (frozen sessions do not count: they are not saved any more). */
+  get unsaved(): ObjectRecord[] {
+    const open = new Set(this.sessions.filter((s) => s.state === 'open').map((s) => s.id))
+    return this.objects.filter((o) => open.has(o.sessionId) && o.text !== o.synced)
+  }
+
+  /** True if the object may be changed: it is in the shown session and that one is open. */
+  writable(object: ObjectRecord): boolean {
+    return object.sessionId === this.currentId && this.current?.state === 'open'
+  }
+
+  /** The files of the Dateien pane: those of the shown session and the free ones. Files of other sessions are hidden. */
+  get visibleFiles(): FileRecord[] {
+    return this.files.filter((f) => !this.foreign(f))
+  }
+
+  /** A file that is part of an object of another session: it can neither be selected nor moved here. */
+  foreign(file: FileRecord): boolean {
+    if (!file.objectId) return false
+    const owner = this.objects.find((o) => o.id === file.objectId)
+    return !!owner && owner.sessionId !== this.currentId
+  }
+
+  #sessionOf(object: ObjectRecord): Session | undefined {
+    return this.sessions.find((s) => s.id === object.sessionId)
+  }
+
+  #ref(session: Session): SessionRef {
+    return { slug: session.id, name: session.name }
+  }
+
+  /** Why a change to the object is refused, in words for the user. */
+  #refuse(object: ObjectRecord): string {
+    const session = this.#sessionOf(object)
+    const name = session ? `„${session.name}“` : 'einer anderen Sitzung'
+    if (session && session.id === this.currentId) {
+      return `${refer(object)} gehört zur Sitzung ${name}, die schon ${session.state === 'merged' ? 'übernommen' : 'eingereicht'} ist. Ändern kannst du es dort nicht mehr.`
+    }
+    return `${refer(object)} gehört zur Sitzung ${name}. Wechsle dorthin, um es zu ändern.`
+  }
+
   async load() {
     try {
-      const [files, objects, chat, ui] = await Promise.all([db.loadFiles(), db.loadObjects(), db.loadChat(), db.loadUi()])
+      const [files, objects, chat, ui, sessions] = await Promise.all([db.loadFiles(), db.loadObjects(), db.loadChat(), db.loadUi(), db.loadSessions()])
       this.chat = chat
       for (const file of files) {
         if (file.status === 'uploading') {
@@ -227,7 +326,10 @@ export class Workspace {
         }
       }
       this.files = files.sort((a, b) => a.addedAt - b.addedAt)
+      this.sessions = sessions.sort((a, b) => a.createdAt - b.createdAt)
       this.objects = objects
+      this.#adopt()
+      this.currentId = this.sessions.find((s) => s.id === ui?.session)?.id ?? (this.sessions.find((s) => s.state === 'open') ?? this.sessions[0])?.id
       if (ui) {
         // Selection and open object as the user left them, as far as the files still exist.
         const known = new Set(files.map((f) => f.sha256))
@@ -241,6 +343,109 @@ export class Workspace {
     }
   }
 
+  /** Objects from before there were sessions are put into one: an open one, or, if they were accepted, a merged one. */
+  #adopt() {
+    type Legacy = ObjectRecord & { stage?: string; pull?: number }
+    const orphans = (this.objects as Legacy[]).filter((o) => !o.sessionId)
+    if (orphans.length === 0) return
+    const accepted = orphans.filter((o) => o.stage === 'merged')
+    const rest = orphans.filter((o) => o.stage !== 'merged')
+    const make = (name: string, state: Session['state'], list: Legacy[]) => {
+      if (list.length === 0) return
+      const session = this.#add(name, state)
+      for (const object of list) {
+        object.sessionId = session.id
+        // What was saved before went to a branch that is not this session's: save it again.
+        if (state === 'open') object.synced = undefined
+        object.stage = undefined
+        object.pull = undefined
+        this.#dirtyObjects.add(object.id)
+      }
+    }
+    make(defaultName(), 'open', rest)
+    make('Übernommen', 'merged', accepted)
+  }
+
+  #add(name: string, state: Session['state'] = 'open'): Session {
+    name = cleanName(name) || defaultName()
+    this.sessions.push({ id: slugify(name), name, state, createdAt: Date.now(), deleted: [] })
+    const session = this.sessions[this.sessions.length - 1]
+    this.#dirtySessions.add(session.id)
+    this.#schedule()
+    return session
+  }
+
+  // --- sessions: a named unit of work, one branch, one pull request ---
+
+  /** Makes a new, open session and shows it. */
+  createSession(name: string): Session {
+    const session = this.#add(name)
+    this.selectSession(session.id)
+    return session
+  }
+
+  selectSession(id: string) {
+    if (!this.sessions.some((s) => s.id === id)) return
+    this.currentId = id
+    this.selection = []
+    this.active = undefined
+    this.#anchor = undefined
+    this.picked = false
+    this.#markUi()
+  }
+
+  renameSession(id: string, name: string) {
+    const session = this.sessions.find((s) => s.id === id)
+    name = cleanName(name)
+    if (!session || !name || name === session.name) return
+    session.name = name
+    this.#dirtySessions.add(id)
+    this.#schedule()
+    // The pull request carries the name too (it is how the session is found again). Best effort: it is renamed with the next try.
+    if (this.login.state === 'user' && session.state !== 'merged' && (session.pull || this.objects.some((o) => o.sessionId === id && o.synced !== undefined))) {
+      void this.#backend.rename(this.#ref(session)).catch(() => undefined)
+    }
+  }
+
+  /** The session new objects go into: the shown one if it is open, a new one if there is none. Undefined if the shown one is frozen. */
+  #openSession(): Session | undefined {
+    const current = this.current
+    if (current) return current.state === 'open' ? current : undefined
+    const open = this.sessions.find((s) => s.state === 'open')
+    const session = open ?? this.#add(defaultName())
+    this.currentId = session.id
+    this.#markUi()
+    return session
+  }
+
+  /** Takes a accepted session with its objects and files out of this view. They stay in the repository and the bucket. */
+  removeSession(id: string) {
+    const session = this.sessions.find((s) => s.id === id)
+    if (!session || session.state !== 'merged') return
+    const gone = this.objects.filter((o) => o.sessionId === id)
+    const ids = new Set(gone.map((o) => o.id))
+    const shas = new Set(this.files.filter((f) => f.objectId && ids.has(f.objectId)).map((f) => f.sha256))
+    this.objects = this.objects.filter((o) => !ids.has(o.id))
+    this.files = this.files.filter((f) => !shas.has(f.sha256))
+    for (const objectId of ids) {
+      this.#dirtyObjects.delete(objectId)
+      this.#removedObjects.add(objectId)
+    }
+    for (const sha of shas) {
+      this.#dirtyFiles.delete(sha)
+      this.#removedFiles.add(sha)
+    }
+    this.sessions = this.sessions.filter((s) => s.id !== id)
+    this.#dirtySessions.delete(id)
+    this.#removedSessions.add(id)
+    this.selection = this.selection.filter((sha) => !shas.has(sha))
+    if (this.active && shas.has(this.active)) this.active = undefined
+    if (this.currentId === id) this.currentId = (this.sessions.find((s) => s.state === 'open') ?? this.sessions[0])?.id
+    this.#markUi()
+    this.#schedule()
+    this.#say('log', `Die Sitzung „${session.name}“ wurde aus der Ansicht entfernt.`)
+  }
+
   // --- dropping files: hash one after the other, upload in the background ---
 
   /** Files from outside. Dropped onto an object (`objectId`), they are also put into it. */
@@ -248,7 +453,7 @@ export class Workspace {
     const files = [...list].sort(byName) // scans are usually numbered: natural order by name
     if (files.length === 0) return
     const message = this.#say('log', '')
-    const batch: Batch = { total: files.length, uploaded: 0, conflicts: [], failed: [], duplicates: [], message, objectId, shas: [], processed: 0, unreadable: [], reasons: [] }
+    const batch: Batch = { total: files.length, uploaded: 0, conflicts: [], failed: [], duplicates: [], message, objectId, shas: [], processed: 0, unreadable: [], reasons: [], elsewhere: [] }
     this.#report(batch)
     this.#queue.push(...files.map((file) => ({ file, batch })))
     void this.#run()
@@ -276,14 +481,16 @@ export class Workspace {
   #listed(batch: Batch) {
     batch.listedTold = true
     const sentences: string[] = []
-    const fresh = batch.shas.length - batch.duplicates.length
+    const here = batch.duplicates.filter((name) => !batch.elsewhere.some((e) => e.name === name))
+    const fresh = batch.shas.length - here.length
     if (fresh > 0 && !batch.objectId) {
       sentences.push(`Du hast ${fresh === 1 ? 'eine Datei' : `${fresh} Dateien`} abgelegt, ${fresh === 1 ? 'sie wird' : 'sie werden'} gerade hochgeladen.`)
     }
-    if (batch.duplicates.length) {
-      const one = batch.duplicates.length === 1
-      sentences.push(one ? `Die Datei „${batch.duplicates[0]}“ war schon vorhanden.` : `${batch.duplicates.length} Dateien waren schon vorhanden.`)
+    if (here.length) {
+      sentences.push(here.length === 1 ? `Die Datei „${here[0]}“ war schon vorhanden.` : `${here.length} Dateien waren schon vorhanden.`)
     }
+    for (const { name, session } of batch.elsewhere.slice(0, 3)) sentences.push(`Die Datei „${name}“ gehört schon zur Sitzung „${session}“.`)
+    if (batch.elsewhere.length > 3) sentences.push(`${batch.elsewhere.length - 3} weitere Dateien gehören schon zu anderen Sitzungen.`)
     if (batch.unreadable.length) sentences.push(`${them(batch.unreadable)} ${batch.unreadable.length === 1 ? 'konnte' : 'konnten'} nicht gelesen werden ${names(batch.unreadable)}.`)
     if (fresh > 0 && !batch.objectId) sentences.push('Möchtest du sie jetzt beschreiben?')
     if (sentences.length) this.#say('assistant', sentences.join(' '))
@@ -328,6 +535,10 @@ export class Workspace {
       if (existing && existing.status !== 'error') {
         batch.duplicates.push(file.name)
         record = existing
+        if (this.foreign(existing)) {
+          const owner = this.objects.find((o) => o.id === existing.objectId)
+          batch.elsewhere.push({ name: file.name, session: (owner && this.#sessionOf(owner)?.name) || 'einer anderen Sitzung' })
+        }
       } else if (existing) {
         void this.#upload(existing, file, batch) // try again after an error
         record = existing
@@ -336,7 +547,7 @@ export class Workspace {
         record = this.files[this.files.length - 1]
         void this.#upload(record, file, batch)
       }
-      batch.shas.push(record.sha256)
+      if (!this.foreign(record)) batch.shas.push(record.sha256) // a file of another session is not shown here, so it is not selected
       if (batch.objectId) this.#putInto(record, batch.objectId)
       this.pending = this.pending.filter((p) => p !== item)
     } catch (error) {
@@ -378,12 +589,14 @@ export class Workspace {
   // --- selecting ---
 
   select(sha256: string, { range = false, toggle = false } = {}) {
+    const clicked = this.files.find((f) => f.sha256 === sha256)
+    if (!clicked || this.foreign(clicked)) return
     this.picked = range || toggle
     if (range && this.#anchor) {
       const from = this.files.findIndex((f) => f.sha256 === this.#anchor)
       const to = this.files.findIndex((f) => f.sha256 === sha256)
       const [low, high] = from < to ? [from, to] : [to, from]
-      this.selection = this.files.slice(low, high + 1).map((f) => f.sha256)
+      this.selection = this.files.slice(low, high + 1).filter((f) => !this.foreign(f)).map((f) => f.sha256)
     } else if (toggle) {
       this.selection = this.selection.includes(sha256) ? this.selection.filter((s) => s !== sha256) : [...this.selection, sha256]
       this.#anchor = sha256
@@ -431,8 +644,23 @@ export class Workspace {
   /** Puts files into an object. A file that belongs to another object is moved. */
   attach(shas: string[], objectId: string) {
     const target = this.objects.find((o) => o.id === objectId)
-    const files = this.files.filter((f) => shas.includes(f.sha256) && f.objectId !== objectId).sort(byName)
-    if (!target || files.length === 0) return
+    const candidates = this.files.filter((f) => shas.includes(f.sha256) && f.objectId !== objectId).sort(byName)
+    if (!target || candidates.length === 0) return
+    if (!this.writable(target)) {
+      this.#say('assistant', this.#refuse(target))
+      return
+    }
+    // A file of another session stays there; a file of a frozen object cannot be taken out.
+    const files = candidates.filter((f) => {
+      const owner = f.objectId ? this.objects.find((o) => o.id === f.objectId) : undefined
+      return !owner || this.writable(owner)
+    })
+    if (files.length < candidates.length) {
+      const stuck = candidates.find((f) => !files.includes(f))
+      const owner = stuck && this.objects.find((o) => o.id === stuck.objectId)
+      if (owner) this.#say('assistant', `Die Datei „${stuck.name}“ lässt sich nicht verschieben. ${this.#refuse(owner)}`)
+    }
+    if (files.length === 0) return
     if (readField(target.text, 'type') === 'image' && this.files.some((f) => f.objectId === objectId)) {
       this.#say('log', `Objekt ${target.number} ist ein Bild und hat schon eine Datei.`)
       return
@@ -479,7 +707,10 @@ export class Workspace {
 
   /** Takes files out of their objects. An object without files is deleted. */
   detach(shas: string[]) {
-    const files = this.files.filter((f) => shas.includes(f.sha256) && f.objectId)
+    const files = this.files.filter((f) => {
+      const owner = shas.includes(f.sha256) && f.objectId ? this.objects.find((o) => o.id === f.objectId) : undefined
+      return !!owner && this.writable(owner)
+    })
     if (files.length === 0) return
     const log: string[] = []
     const notes: string[] = []
@@ -531,9 +762,18 @@ export class Workspace {
       this.objects = this.objects.filter((o) => o.id !== object.id)
       this.#dirtyObjects.delete(object.id)
       this.#removedObjects.add(object.id)
+      // If it is on the branch (or on its way there), the next save removes it from there.
+      const session = this.#sessionOf(object)
+      if (session && (object.synced !== undefined || this.#syncing)) {
+        session.deleted.push(object.id)
+        this.#dirtySessions.add(session.id)
+      }
       lines.push(`Objekt ${object.number} hat keine Dateien mehr und wurde gelöscht.`)
     }
-    if (emptied.size > 0) this.#schedule()
+    if (emptied.size > 0) {
+      this.#schedule()
+      this.#syncAfterApp()
+    }
   }
 
   // --- chat: the user writes, the agent answers with tool calls, the workspace carries them out ---
@@ -612,9 +852,13 @@ export class Workspace {
 
   /** A point from the map service goes onto the object's location, an entity of it, or one of its subjects. */
   #geocode(call: Extract<ToolCall, { tool: 'set_geocode' }>, out: Out): ObjectRecord | undefined {
-    const object = this.objects.find((o) => o.number === call.object)
+    const object = this.shown.find((o) => o.number === call.object)
     if (!object) {
       out.notes.push(`Objekt ${call.object} gibt es nicht.`)
+      return undefined
+    }
+    if (!this.writable(object)) {
+      out.notes.push(this.#refuse(object))
       return undefined
     }
     const point = { lat: round(call.lat), lon: round(call.lon), precision: call.precision, source: call.source }
@@ -692,6 +936,11 @@ export class Workspace {
       out.notes.push(target.length === 0 ? 'Wähle zuerst eine oder mehrere Dateien aus.' : 'Die Dateien gehören schon zu einem Objekt.')
       return []
     }
+    const session = this.#openSession()
+    if (!session) {
+      out.notes.push(`Die Sitzung „${this.current?.name}“ ist ${this.current?.state === 'merged' ? 'übernommen' : 'eingereicht'}. Wähle oben eine andere Sitzung oder lege eine neue an.`)
+      return []
+    }
     const together = call.type === 'document' && call.together !== false
     const groups = together ? [[...free].sort(byName)] : free.map((f) => [f])
     const created: ObjectRecord[] = []
@@ -699,7 +948,8 @@ export class Workspace {
 
     for (const group of groups) {
       const id = ulid()
-      const number = Math.max(0, ...this.objects.map((o) => o.number)) + 1
+      // Numbers (and with them the colors) start again in every session.
+      const number = Math.max(0, ...this.objects.filter((o) => o.sessionId === session.id).map((o) => o.number)) + 1
       let text = newObjectText(id, call.type, call.subtype)
       const applied: string[] = []
       for (const file of group) text = addFile(text, $state.snapshot(file.entry))
@@ -711,7 +961,7 @@ export class Workspace {
         }
       }
 
-      this.objects.push({ id, number, text, updatedAt: Date.now() })
+      this.objects.push({ id, number, text, updatedAt: Date.now(), sessionId: session.id })
       this.#markObject(id)
       for (const file of group) {
         file.objectId = id
@@ -735,9 +985,13 @@ export class Workspace {
   }
 
   #patch(call: Extract<ToolCall, { tool: 'patch' }>, out: Out): ObjectRecord | undefined {
-    const object = this.objects.find((o) => o.number === call.object)
+    const object = this.shown.find((o) => o.number === call.object)
     if (!object) {
       out.notes.push(`Objekt ${call.object} gibt es nicht.`)
+      return undefined
+    }
+    if (!this.writable(object)) {
+      out.notes.push(this.#refuse(object))
       return undefined
     }
     const name = FIELD_NAMES[call.field] ?? call.field
@@ -772,7 +1026,7 @@ export class Workspace {
   /** The user changed the text in the editor. */
   updateText(text: string) {
     const object = this.activeObject
-    if (!object) return
+    if (!object || !this.writable(object)) return
     object.text = text
     object.updatedAt = Date.now()
     this.#dirtyObjects.add(object.id)
@@ -819,11 +1073,15 @@ export class Workspace {
     this.#removedObjects.clear()
     const removedFiles = [...this.#removedFiles]
     this.#removedFiles.clear()
+    const sessions = [...this.#dirtySessions].flatMap((id) => this.sessions.filter((s) => s.id === id))
+    this.#dirtySessions.clear()
+    const removedSessions = [...this.#removedSessions]
+    this.#removedSessions.clear()
     const chat = this.#dirtyChat
     this.#dirtyChat = false
     const ui = this.#dirtyUi
     this.#dirtyUi = false
-    if (files.length === 0 && objects.length === 0 && removed.length === 0 && removedFiles.length === 0 && !chat && !ui) return
+    if (files.length === 0 && objects.length === 0 && removed.length === 0 && removedFiles.length === 0 && sessions.length === 0 && removedSessions.length === 0 && !chat && !ui) return
 
     this.saveState = 'saving'
     try {
@@ -831,8 +1089,10 @@ export class Workspace {
       const plainFiles = files.map((f) => ({ ...$state.snapshot(f), progress: undefined }))
       await db.save(plainFiles, objects.map((o) => $state.snapshot(o)), chat ? $state.snapshot(this.chat.slice(-200)) : undefined,
         removed,
-        ui ? { selection: $state.snapshot(this.selection), active: this.active } : undefined,
+        ui ? { selection: $state.snapshot(this.selection), active: this.active, session: this.currentId } : undefined,
         removedFiles,
+        sessions.map((s) => $state.snapshot(s)),
+        removedSessions,
       )
       this.saveState = 'saved'
     } catch {
@@ -850,71 +1110,36 @@ export class Workspace {
   async refreshSession(notice?: string) {
     try {
       const user = await this.#backend.me()
-      this.session = user ? { state: 'user', user } : { state: 'anonymous', notice }
+      this.login = user ? { state: 'user', user } : { state: 'anonymous', notice }
       if (user) {
         this.#syncAfterApp()
         void this.checkPulls()
       }
     } catch (error) {
-      this.session = { state: 'error', message: (error as Error).message }
+      this.login = { state: 'error', message: (error as Error).message }
     }
   }
 
   /** The server says the session is over. What is in the browser stays. */
   signedOut() {
-    if (this.session.state === 'anonymous') return
+    if (this.login.state === 'anonymous') return
     this.#stopTimers()
-    this.session = { state: 'anonymous', notice: 'Deine Sitzung ist abgelaufen. Bitte melde dich neu an.' }
+    this.login = { state: 'anonymous', notice: 'Deine Sitzung ist abgelaufen. Bitte melde dich neu an.' }
   }
 
   async logout() {
     await this.#backend.logout()
     this.#stopTimers()
-    this.session = { state: 'anonymous' }
+    this.login = { state: 'anonymous' }
   }
 
-  /** Where an object stands. */
+  /** Where an object stands: it follows its session once it is saved. */
   standing(object: ObjectRecord): Standing {
+    const session = this.#sessionOf(object)
+    if (session && session.state !== 'open') return session.state
     if (object.synced === undefined) return 'local'
     if (object.text !== object.synced) return 'changed'
-    return object.stage ?? 'saved'
-  }
-
-  /** Objects that are in the archive now. */
-  get merged(): ObjectRecord[] {
-    return this.objects.filter((o) => this.standing(o) === 'merged')
-  }
-
-  /** Takes the accepted objects and their files out of this view. They stay in the repository and the bucket. */
-  removeMerged() {
-    const gone = this.merged
-    if (gone.length === 0) return
-    const ids = new Set(gone.map((o) => o.id))
-    const files = this.files.filter((f) => f.objectId && ids.has(f.objectId))
-    const shas = new Set(files.map((f) => f.sha256))
-    this.objects = this.objects.filter((o) => !ids.has(o.id))
-    this.files = this.files.filter((f) => !shas.has(f.sha256))
-    for (const id of ids) {
-      this.#dirtyObjects.delete(id)
-      this.#removedObjects.add(id)
-    }
-    for (const sha of shas) {
-      this.#dirtyFiles.delete(sha)
-      this.#removedFiles.add(sha)
-    }
-    this.selection = this.selection.filter((sha) => !shas.has(sha))
-    if (this.active && shas.has(this.active)) this.active = undefined
-    this.#markUi()
-    this.#schedule()
-    this.#say('log', `${gone.length === 1 ? 'Ein übernommenes Objekt' : `${gone.length} übernommene Objekte`} aus der Ansicht entfernt.`)
-  }
-
-  /** The objects the next pull request would bring: everything that is not already part of one. */
-  get outgoing(): ObjectRecord[] {
-    return this.objects.filter((o) => {
-      const standing = this.standing(o)
-      return standing !== 'submitted' && standing !== 'merged'
-    })
+    return 'saved'
   }
 
   #stopTimers() {
@@ -924,39 +1149,60 @@ export class Workspace {
 
   /** The app changed something: save in a second (the changes of one answer go into one commit). */
   #syncAfterApp() {
-    if (this.session.state !== 'user') return
+    if (this.login.state !== 'user') return
     clearTimeout(this.#appTimer)
     this.#appTimer = setTimeout(() => void this.sync(), APP_DELAY)
   }
 
   /** The person typed: save when it has been quiet for a while, or earlier if the app saves anyway. */
   #syncAfterTyping(delay = TYPING_DELAY) {
-    if (this.session.state !== 'user') return
+    if (this.login.state !== 'user') return
     clearTimeout(this.#typingTimer)
     this.#typingTimer = setTimeout(() => void this.sync(), delay)
   }
 
-  /** Saves every changed object to the person's branch in one commit. Returns whether everything is saved. */
+  /** Saves every open session: its changed objects in one commit on its branch, and removes what was deleted. Returns whether everything is saved. */
   async sync(): Promise<boolean> {
     this.#stopTimers()
-    if (this.session.state !== 'user') return false
+    if (this.login.state !== 'user') return false
     if (this.#syncing) {
       this.#syncAgain = true
       return false
     }
-    const todo = this.objects.filter((o) => o.text !== o.synced).map((object) => ({ object, text: object.text }))
-    if (todo.length === 0) return true
+    const work = this.sessions
+      .filter((s) => s.state === 'open')
+      .map((session) => ({
+        session,
+        todo: this.objects.filter((o) => o.sessionId === session.id && o.text !== o.synced).map((object) => ({ object, text: object.text })),
+        deleted: [...session.deleted],
+      }))
+      .filter((w) => w.todo.length > 0 || w.deleted.length > 0)
+    if (work.length === 0) return true
 
     this.#syncing = true
     this.syncState = 'saving'
     let ok = false
     try {
-      await this.#backend.save(todo.map(({ object, text }) => ({ id: object.id, text })))
-      for (const { object, text } of todo) {
-        object.synced = text
-        // An object that was accepted before and is changed again starts a new round.
-        if (object.stage !== 'submitted') object.stage = 'saved'
-        this.#dirtyObjects.add(object.id)
+      for (const { session, todo, deleted } of work) {
+        try {
+          const pull = await this.#backend.save(this.#ref(session), todo.map(({ object, text }) => ({ id: object.id, text })), deleted)
+          for (const { object, text } of todo) {
+            object.synced = text
+            this.#dirtyObjects.add(object.id)
+          }
+          session.deleted = session.deleted.filter((id) => !deleted.includes(id))
+          if (pull) {
+            session.pull = pull.number
+            session.url = pull.url
+          }
+          this.#dirtySessions.add(session.id)
+        } catch (error) {
+          if (!(error instanceof Locked)) throw error
+          // Submitted from somewhere else (or before this browser knew): what was changed here is not taken any more.
+          session.state = 'submitted'
+          this.#dirtySessions.add(session.id)
+          this.#say('status', `Die Sitzung „${session.name}“ war schon eingereicht. Spätere Änderungen daran werden nicht mehr gesichert.`)
+        }
       }
       this.#schedule()
       this.syncState = 'idle'
@@ -977,15 +1223,18 @@ export class Workspace {
       this.#syncAgain = false
       this.#syncAfterApp()
     }
-    return ok && !this.objects.some((o) => o.text !== o.synced)
+    return ok && this.unsaved.length === 0 && !this.sessions.some((s) => s.state === 'open' && s.deleted.length > 0)
   }
 
-  /** Saves what is open, then opens the pull request. Tells the person in the chat what came of it. */
+  /** Saves what is open, then submits the shown session. Tells the person in the chat what came of it. */
   async submit() {
-    if (this.submitting || this.session.state !== 'user' || this.outgoing.length === 0) return
+    const session = this.current
+    if (this.submitting || this.login.state !== 'user' || !session || session.state !== 'open') return
+    const objects = this.shown
+    if (objects.length === 0) return
     this.submitting = true
     try {
-      const open = this.outgoing.filter((o) => validateObjectYaml(o.text).length > 0)
+      const open = objects.filter((o) => validateObjectYaml(o.text).length > 0)
       if (open.length > 0) {
         const list = open.slice(0, 3).map(refer).join(', ') + (open.length > 3 ? ', …' : '')
         this.#say('status', `Eingereicht wird erst, wenn alle Objekte vollständig sind. Es fehlt noch etwas bei: ${list}.`)
@@ -997,45 +1246,48 @@ export class Workspace {
         this.#say('status', `Das Einreichen ging nicht, weil das Speichern nicht geklappt hat${this.syncError ? `: ${this.syncError}` : '.'}`)
         return
       }
-      const sent = this.objects.filter((o) => o.stage === 'saved')
-      const pull = await this.#backend.submit()
-      for (const object of sent) {
-        object.stage = 'submitted'
-        object.pull = pull.number
-        this.#dirtyObjects.add(object.id)
-      }
+      if (session.state !== 'open') return // it turned out to be submitted already
+      const pull = await this.#backend.submit(this.#ref(session))
+      session.state = 'submitted'
+      session.pull = pull.number
+      session.url = pull.url
+      this.#dirtySessions.add(session.id)
       this.#schedule()
-      const n = sent.length
-      this.#say('assistant', `Ich habe ${n === 1 ? 'ein Objekt' : `${n} Objekte`} eingereicht. Sie werden jetzt geprüft; du kannst in der Zwischenzeit weitermachen.`)
+      const n = objects.length
+      this.#say('assistant', `Ich habe die Sitzung „${session.name}“ mit ${n === 1 ? 'einem Objekt' : `${n} Objekten`} eingereicht. Sie wird jetzt geprüft. Du kannst in einer anderen Sitzung weitermachen.`)
     } catch (error) {
-      if (!(error instanceof SignedOut)) this.#say('status', `Das Einreichen ging nicht: ${(error as Error).message}`)
+      if (error instanceof Locked) {
+        session.state = 'submitted'
+        this.#dirtySessions.add(session.id)
+        this.#schedule()
+      } else if (!(error instanceof SignedOut)) {
+        this.#say('status', `Das Einreichen ging nicht: ${(error as Error).message}`)
+      }
     } finally {
       this.submitting = false
     }
   }
 
-  /** Looks at the pull requests that wait for review: accepted objects are marked, a closed one is open for revision. */
+  /** Looks at the pull requests that wait for review: an accepted session is final, a closed one is open again. */
   async checkPulls() {
-    if (this.session.state !== 'user') return
-    const numbers = [...new Set(this.objects.filter((o) => o.stage === 'submitted' && o.pull).map((o) => o.pull as number))]
-    for (const number of numbers) {
+    if (this.login.state !== 'user') return
+    for (const session of this.sessions.filter((s) => s.state === 'submitted' && s.pull)) {
       try {
-        const pull = await this.#backend.pull(number)
+        const pull = await this.#backend.pull(session.pull as number)
         if (pull.state === 'open') continue
-        const parts = this.objects.filter((o) => o.stage === 'submitted' && o.pull === number)
-        for (const object of parts) {
-          object.stage = pull.merged ? 'merged' : 'saved'
-          object.pull = undefined
-          this.#dirtyObjects.add(object.id)
+        const n = this.objects.filter((o) => o.sessionId === session.id).length
+        if (pull.merged) {
+          session.state = 'merged'
+          this.#say('assistant', `Die Sitzung „${session.name}“ wurde geprüft und übernommen (${n === 1 ? 'ein Objekt' : `${n} Objekte`}). Danke!`)
+        } else {
+          // Closed without being accepted: the branch is still there, the session can be revised and submitted again.
+          session.state = 'open'
+          session.pull = undefined
+          session.url = undefined
+          this.#say('status', `Die Einreichung der Sitzung „${session.name}“ wurde nicht übernommen. Du kannst sie überarbeiten und erneut einreichen.`)
         }
+        this.#dirtySessions.add(session.id)
         this.#schedule()
-        const n = parts.length
-        this.#say(
-          pull.merged ? 'assistant' : 'status',
-          pull.merged
-            ? `${n === 1 ? 'Ein Objekt wurde' : `${n} Objekte wurden`} geprüft und übernommen. Danke!`
-            : `Die Einreichung von ${n === 1 ? 'einem Objekt' : `${n} Objekten`} wurde nicht übernommen. Du kannst sie überarbeiten und erneut einreichen.`,
-        )
       } catch {
         return // no connection or signed out: next time
       }

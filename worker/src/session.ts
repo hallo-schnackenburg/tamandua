@@ -2,7 +2,7 @@
 // (AES-GCM) with a key from SESSION_SECRET, so the Worker needs no database and the browser can neither
 // read nor change it. The cookie is HttpOnly: scripts on the page never see it either.
 
-export interface Session {
+export interface Auth {
   login: string
   name: string
   avatar: string

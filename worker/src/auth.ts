@@ -8,7 +8,7 @@
 // Who may use the tool is decided by GitHub: whoever has write access to the data repository.
 
 import { currentUser, exchangeCode, refreshTokens, repoRole, revoke, type GithubEnv, type Tokens } from './github.js'
-import { LOGIN_COOKIE, SESSION_COOKIE, SESSION_DAYS, challengeOf, randomToken, readCookie, seal, setCookie, unseal, type Session } from './session.js'
+import { LOGIN_COOKIE, SESSION_COOKIE, SESSION_DAYS, challengeOf, randomToken, readCookie, seal, setCookie, unseal, type Auth } from './session.js'
 
 export interface AuthEnv extends GithubEnv {
   SESSION_SECRET?: string
@@ -35,7 +35,7 @@ function redirect(to: string, cookies: string[] = []): Response {
 const forget = (name: string, secure: boolean) => setCookie(name, '', 0, secure)
 
 export interface Signed {
-  session: Session
+  session: Auth
   /** Set when the session was renewed and the browser has to get the new cookie. */
   cookie?: string
 }
@@ -44,7 +44,7 @@ export interface Signed {
 export async function readSession(request: Request, env: AuthEnv, fetchFn: typeof fetch): Promise<Signed | null> {
   const raw = readCookie(request, SESSION_COOKIE)
   if (!raw || !env.SESSION_SECRET) return null
-  const session = await unseal<Session>(raw, env.SESSION_SECRET)
+  const session = await unseal<Auth>(raw, env.SESSION_SECRET)
   if (!session) return null
 
   if (session.accessExpires - Date.now() > RENEW_BEFORE) return { session }
@@ -58,7 +58,7 @@ export async function readSession(request: Request, env: AuthEnv, fetchFn: typeo
   }
 }
 
-const withTokens = (session: Session, tokens: Tokens): Session => ({
+const withTokens = (session: Auth, tokens: Tokens): Auth => ({
   ...session,
   access: tokens.access,
   accessExpires: tokens.accessExpires,
@@ -85,7 +85,6 @@ export async function handleAuth(request: Request, route: string, env: AuthEnv, 
       state,
       code_challenge: await challengeOf(verifier),
       code_challenge_method: 'S256',
-      scope: 'offline_access',
     }).toString()
     // State and verifier wait in a short-lived cookie until GitHub sends the person back.
     return redirect(authorize.toString(), [setCookie(LOGIN_COOKIE, await seal({ state, verifier }, env.SESSION_SECRET!), 600, secure)])
@@ -105,7 +104,7 @@ export async function handleAuth(request: Request, route: string, env: AuthEnv, 
         await revoke(env, tokens.access, fetchFn)
         return redirect(`${appUrl}/?login=denied&user=${encodeURIComponent(user.login)}`, [cleanup])
       }
-      const session: Session = { ...user, role, access: tokens.access, accessExpires: tokens.accessExpires, refresh: tokens.refresh, refreshExpires: tokens.refreshExpires }
+      const session: Auth = { ...user, role, access: tokens.access, accessExpires: tokens.accessExpires, refresh: tokens.refresh, refreshExpires: tokens.refreshExpires }
       return redirect(`${appUrl}/`, [cleanup, setCookie(SESSION_COOKIE, await seal(session, env.SESSION_SECRET!), MAX_AGE, secure)])
     } catch (error) {
       console.error('Sign-in failed', (error as Error).message)

@@ -50,10 +50,22 @@ und Pull Requests annehmen.
 
 ## 5. Ablauf der Erfassung
 
-- Das erste gesicherte Objekt legt den Branch `erfassung/<login>` und einen Entwurf (Draft-Pull-Request) an. Jede
-  weitere Sicherung ist ein Commit auf diesem Branch; der Entwurf zeigt immer den aktuellen Stand und `validate`
-  läuft bei jedem Commit.
+Die Arbeit ist in **Sitzungen** gegliedert, benannten Arbeitseinheiten wie "Dachbodenfund Postkarten". Eine Sitzung
+ist ein Branch und ein Pull Request.
+
+- Das erste gesicherte Objekt einer Sitzung legt den Branch `erfassung/<login>/<kurzname>` und einen Entwurf
+  (Draft-Pull-Request) an. Der Titel ist `<Sitzungsname> (<Person>, TT.MM.JJJJ, HH:MM)`; der Sitzungsname steht
+  zusätzlich als Marker im Text des Pull Requests, damit die App die Sitzung wiederfindet. Jede weitere Sicherung
+  ist ein Commit auf diesem Branch; `validate` läuft bei jedem Commit.
+- Es können mehrere Sitzungen gleichzeitig offen sein. Ein Objekt gehört zu genau einer Sitzung, eine Datei zu der
+  Sitzung, deren Objekt sie verwendet.
 - Die App sichert eine Sekunde nach jeder eigenen Änderung (Objekt angelegt, Agent hat Felder gesetzt, Dateien
-  zugeordnet) und 30 Sekunden nach der letzten Eingabe im Editor.
+  zugeordnet) und 30 Sekunden nach der letzten Eingabe im Editor. Lokal gelöschte Objekte werden beim nächsten
+  Sichern auch aus dem Branch entfernt.
 - "Einreichen" stellt den Entwurf auf "Ready for review". Entwürfe filterst du in der PR-Liste mit `-is:draft` aus.
-- Nach dem Merge löscht GitHub den Branch; die nächste Sicherung beginnt mit einem neuen Entwurf.
+- Eine eingereichte Sitzung ist eingefroren: Die App schreibt nie wieder auf ihren Branch (der Worker lehnt es ab),
+  damit Prüfende keine Benachrichtigungen über neue Commits bekommen. Weitere Objekte kommen in eine andere Sitzung.
+- Wird der Pull Request ohne Merge geschlossen, ist die Sitzung in der App wieder offen. Die nächste Sicherung legt
+  einen neuen Entwurf auf demselben Branch an.
+- Nach dem Merge löscht GitHub den Branch. Die Sitzung gilt als übernommen und lässt sich in der App aus der
+  Ansicht entfernen; im Archiv bleibt sie.

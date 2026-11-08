@@ -1,8 +1,10 @@
 // Saving to the data repository, for the person who is signed in:
 //
-//   POST /repo/save        {objects: [{id, text}]}  one commit on the person's branch; the first one also
-//                          opens the branch's pull request as a draft
-//   POST /repo/submit      asks for a review: marks the draft ready (or opens the pull request)
+//   POST /repo/save        {session, objects?, deleted?}  one commit on the session's branch (objects written,
+//                          deleted ones removed); the first one also opens the pull request as a draft.
+//                          Refused once the pull request is ready for review: it is frozen then.
+//   POST /repo/submit      {session}  asks for a review: marks the draft ready (or opens the pull request)
+//   POST /repo/rename      {session}  gives the open pull request the session's new name
 //   GET  /repo/pull/<n>    state of a pull request: open, closed, merged
 //
 // The app checks every object against the schema before it sends it. The Worker cannot (the schema
@@ -11,35 +13,52 @@
 
 import { objectPath, parseObjectId } from '@tamandua/core/paths'
 import { GitHubError, Repo, type GithubEnv } from './github.js'
-import type { Session } from './session.js'
+import type { Auth } from './session.js'
 
 const MAX_OBJECTS = 50
 const MAX_OBJECT_BYTES = 200_000
 
-/** "Erfassung von Anna (07.11.2026, 23:47)": when the pull request was opened, in the time of the archive. */
-export function titleOf(name: string, now = new Date()): string {
-  const zone = { timeZone: 'Europe/Berlin' } as const
-  const date = now.toLocaleDateString('de-DE', { ...zone, day: '2-digit', month: '2-digit', year: 'numeric' })
-  const time = now.toLocaleTimeString('de-DE', { ...zone, hour: '2-digit', minute: '2-digit' })
-  return `Erfassung von ${name} (${date}, ${time})`
-}
-
-export const branchOf = (login: string): string => `erfassung/${login.replace(/[^A-Za-z0-9-]/g, '-')}`
+/** The branch of one session of a person: erfassung/<login>/<slug>. */
+export const branchOf = (login: string, slug: string): string => `erfassung/${login.replace(/[^A-Za-z0-9-]/g, '-')}/${slug}`
 
 interface Failure {
   error: string
   status: number
 }
 
-export interface Saved {
-  files: { path: string; content: string }[]
+export interface SessionRef {
+  /** Chosen once when the session is created and never changed: names the branch. */
+  slug: string
+  /** What the person calls the session; may change (it is part of the pull request's title). */
+  name: string
 }
 
-/** The objects of a save request as files, or a failure to report. */
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+export function parseSessionRef(data: unknown): SessionRef | Failure {
+  const slug = (data as { slug?: unknown } | null)?.slug
+  const raw = (data as { name?: unknown } | null)?.name
+  if (typeof slug !== 'string' || slug.length > 60 || !SLUG.test(slug)) return { error: 'A session needs a slug (a-z, 0-9, -).', status: 400 }
+  const name = typeof raw === 'string' ? raw.replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) : ''
+  if (!name) return { error: 'A session needs a name.', status: 400 }
+  return { slug, name }
+}
+
+export interface Saved {
+  session: SessionRef
+  files: { path: string; content: string }[]
+  removals: string[]
+}
+
+/** A save request as the files to write and the paths to remove, or a failure to report. */
 export function parseSave(data: unknown): Saved | Failure {
-  const objects = (data as { objects?: unknown } | null)?.objects
-  if (!Array.isArray(objects) || objects.length === 0 || objects.length > MAX_OBJECTS) {
-    return { error: `"objects" must list 1 to ${MAX_OBJECTS} objects.`, status: 400 }
+  const session = parseSessionRef((data as { session?: unknown } | null)?.session)
+  if ('error' in session) return session
+  const objects = (data as { objects?: unknown } | null)?.objects ?? []
+  const deleted = (data as { deleted?: unknown } | null)?.deleted ?? []
+  if (!Array.isArray(objects) || !Array.isArray(deleted)) return { error: '"objects" and "deleted" must be lists.', status: 400 }
+  if (objects.length > MAX_OBJECTS || deleted.length > MAX_OBJECTS || objects.length + deleted.length === 0) {
+    return { error: `"objects" and "deleted" must list 1 to ${MAX_OBJECTS} objects together.`, status: 400 }
   }
   const files: Saved['files'] = []
   const seen = new Set<string>()
@@ -55,41 +74,83 @@ export function parseSave(data: unknown): Saved | Failure {
     if (inside !== id) return { error: 'The id in the YAML does not match the object.', status: 400 }
     files.push({ path: objectPath(id), content: text.endsWith('\n') ? text : text + '\n' })
   }
-  return { files }
+  const removals: string[] = []
+  for (const raw of deleted) {
+    const id = typeof raw === 'string' ? parseObjectId(raw) : null
+    if (!id) return { error: '"deleted" must list object ids (ULID).', status: 400 }
+    if (seen.has(id)) return { error: 'An object is listed twice.', status: 400 }
+    seen.add(id)
+    removals.push(objectPath(id))
+  }
+  return { session, files, removals }
+}
+
+/** "Dachbodenfund Postkarten (Anna Beispiel, 07.11.2026, 23:47)": the session and when its pull request was opened, in Berlin time. */
+export function titleOf(name: string, person: string, now = new Date()): string {
+  const zone = { timeZone: 'Europe/Berlin' } as const
+  const date = now.toLocaleDateString('de-DE', { ...zone, day: '2-digit', month: '2-digit', year: 'numeric' })
+  const time = now.toLocaleTimeString('de-DE', { ...zone, hour: '2-digit', minute: '2-digit' })
+  return `${name} (${person}, ${date}, ${time})`
+}
+
+/** The text of the pull request; the marker lets the app find the session's name again. */
+export function bodyOf(login: string, session: SessionRef): string {
+  const marker = JSON.stringify(session).replace(/--/g, '-\\u002d')
+  return `Erfasst über Tamandua von ${login}.\n\n<!-- tamandua-session: ${marker} -->`
 }
 
 export interface RepoEnv extends GithubEnv {}
 
-export async function handleRepo(request: Request, route: string, session: Session, env: RepoEnv, fetchFn: typeof fetch): Promise<Response | null> {
+export async function handleRepo(request: Request, route: string, user: Auth, env: RepoEnv, fetchFn: typeof fetch): Promise<Response | null> {
   if (!route.startsWith('/repo/')) return null
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
   if (!env.DATA_REPO) return json({ error: 'The server has no data repository (DATA_REPO).' }, 500)
-  const repo = new Repo(session.access, env.DATA_REPO, env.BASE_BRANCH ?? 'main', fetchFn)
-  const branch = branchOf(session.login)
+  const repo = new Repo(user.access, env.DATA_REPO, env.BASE_BRANCH ?? 'main', fetchFn)
+
+  const body = async (): Promise<unknown | Response> => {
+    try {
+      return JSON.parse(await request.text())
+    } catch {
+      return json({ error: 'Body must be valid JSON.' }, 400)
+    }
+  }
 
   try {
     if (route === '/repo/save' && request.method === 'POST') {
-      let data: unknown
-      try {
-        data = JSON.parse(await request.text())
-      } catch {
-        return json({ error: 'Body must be valid JSON.' }, 400)
-      }
+      const data = await body()
+      if (data instanceof Response) return data
       const parsed = parseSave(data)
       if ('error' in parsed) return json({ error: parsed.error }, parsed.status)
-      const n = parsed.files.length
-      const commit = await repo.save(branch, parsed.files, `Erfassung: ${n} ${n === 1 ? 'Objekt' : 'Objekte'}`)
+      const { session, files, removals } = parsed
+      const branch = branchOf(user.login, session.slug)
+
+      // A pull request that is ready for review is frozen: the reviewer reads a fixed state.
+      const existing = await repo.current(branch)
+      if (existing && !existing.draft) return json({ error: 'The session was submitted and cannot be changed.', locked: true }, 409)
+
+      const parts = [files.length > 0 && `${files.length} ${files.length === 1 ? 'Objekt' : 'Objekte'}`, removals.length > 0 && `${removals.length} gelöscht`]
+      const commit = await repo.save(branch, files, removals, `Erfassung: ${parts.filter(Boolean).join(', ')}`)
       // The pull request is a convenience: if it cannot be opened now, the save still counts.
-      const pull = await repo.draft(branch, titleOf(session.name), `Erfasst über Tamandua von ${session.login}.`).catch((error) => {
-        console.error('Could not open the pull request', error)
-        return undefined
-      })
-      return json({ commit, saved: n, pull })
+      const pull =
+        existing ??
+        (commit
+          ? await repo.draft(branch, titleOf(session.name, user.name), bodyOf(user.login, session)).catch((error) => {
+              console.error('Could not open the pull request', error)
+              return undefined
+            })
+          : undefined)
+      return json({ commit, saved: files.length, deleted: removals.length, pull })
     }
 
-    if (route === '/repo/submit' && request.method === 'POST') {
-      const pull = await repo.submit(branch, titleOf(session.name), `Erfasst über Tamandua von ${session.login}.`)
-      return json(pull)
+    if ((route === '/repo/submit' || route === '/repo/rename') && request.method === 'POST') {
+      const data = await body()
+      if (data instanceof Response) return data
+      const session = parseSessionRef((data as { session?: unknown } | null)?.session)
+      if ('error' in session) return json({ error: session.error }, session.status)
+      const branch = branchOf(user.login, session.slug)
+      const title = titleOf(session.name, user.name)
+      if (route === '/repo/submit') return json(await repo.submit(branch, title, bodyOf(user.login, session)))
+      return json({ pull: (await repo.rename(branch, title, bodyOf(user.login, session))) ?? null })
     }
 
     const match = /^\/repo\/pull\/(\d{1,9})$/.exec(route)

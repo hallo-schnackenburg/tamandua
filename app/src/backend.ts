@@ -17,15 +17,34 @@ export interface Pull {
   url: string
   state: 'open' | 'closed'
   merged: boolean
+  draft?: boolean
+}
+
+/** What the Worker needs to know of a session: the branch is made from `slug`, the pull request is titled with `name`. */
+export interface SessionRef {
+  slug: string
+  name: string
+}
+
+/** The pull request of the session is no longer a draft: it was submitted, nothing may be added to it. */
+export class Locked extends Error {
+  constructor() {
+    super('Diese Sitzung ist schon eingereicht.')
+  }
 }
 
 export interface Backend {
   /** The signed-in person, or undefined if nobody is. Throws if the server cannot be asked. */
   me(): Promise<User | undefined>
-  /** Puts the objects (id and YAML text) into one commit on the person's branch. */
-  save(objects: { id: string; text: string }[]): Promise<void>
-  /** Opens the pull request of the person's branch, or returns the one that is open. */
-  submit(): Promise<Pull>
+  /**
+   * Puts the objects (id and YAML text) into one commit on the session's branch and removes the deleted
+   * ones from it. Returns the pull request of the session, if there is one. Throws `Locked` if it was submitted.
+   */
+  save(session: SessionRef, objects: { id: string; text: string }[], deleted: string[]): Promise<Pull | undefined>
+  /** Marks the pull request of the session as ready for review. */
+  submit(session: SessionRef): Promise<Pull>
+  /** Gives the pull request of the session its new name, if it has one. */
+  rename(session: SessionRef): Promise<void>
   pull(number: number): Promise<Pull>
   logout(): Promise<void>
   /** Where the browser goes to sign in. */
@@ -53,23 +72,41 @@ export class HttpBackend implements Backend {
     return (await response.json()) as User
   }
 
-  async save(objects: { id: string; text: string }[]): Promise<void> {
-    for (let from = 0; from < objects.length; from += MAX_PER_SAVE) {
+  async save(session: SessionRef, objects: { id: string; text: string }[], deleted: string[]): Promise<Pull | undefined> {
+    let pull: Pull | undefined
+    for (let o = 0, d = 0; o < objects.length || d < deleted.length; o += MAX_PER_SAVE, d += MAX_PER_SAVE) {
       const response = await request(`${this.#url}/repo/save`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ objects: objects.slice(from, from + MAX_PER_SAVE) }),
+        body: JSON.stringify({ session, objects: objects.slice(o, o + MAX_PER_SAVE), deleted: deleted.slice(d, d + MAX_PER_SAVE) }),
       })
-      if (!response.ok) throw new Error((await jsonOf<object>(response)).error ?? `Fehler ${response.status}`)
+      const data = await jsonOf<{ pull?: Pull; locked?: boolean }>(response)
+      if (response.status === 409 && data.locked) throw new Locked()
+      if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+      pull = data.pull ?? pull
     }
+    return pull
   }
 
-  async submit(): Promise<Pull> {
-    const response = await request(`${this.#url}/repo/submit`, { method: 'POST' })
+  async submit(session: SessionRef): Promise<Pull> {
+    const response = await request(`${this.#url}/repo/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session }),
+    })
     const data = await jsonOf<Pull>(response)
     if (response.status === 409) throw new Error('Es gibt nichts Neues einzureichen.')
     if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
     return data
+  }
+
+  async rename(session: SessionRef): Promise<void> {
+    const response = await request(`${this.#url}/repo/rename`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session }),
+    })
+    if (!response.ok) throw new Error((await jsonOf<object>(response)).error ?? `Fehler ${response.status}`)
   }
 
   async pull(number: number): Promise<Pull> {
@@ -92,27 +129,59 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  */
 export class FakeBackend implements Backend {
   readonly loginUrl = '#login'
-  saved = new Map<string, string>()
+  /** What is on the branches: session slug → object id → text. */
+  branches = new Map<string, Map<string, string>>()
+  /** Session slugs whose pull request was submitted, and those that were closed/merged. */
+  submitted = new Set<string>()
+  names = new Map<string, string>()
   merged = false
+  closed = false
   #signedIn = true
+  #pulls = new Map<string, number>()
+
+  get saved(): Map<string, string> {
+    return new Map([...this.branches.values()].flatMap((b) => [...b]))
+  }
+
+  #pullOf(slug: string): Pull {
+    let number = this.#pulls.get(slug)
+    if (!number) this.#pulls.set(slug, (number = this.#pulls.size + 1))
+    return { number, url: `https://example.org/pull/${number}`, state: 'open', merged: false, draft: !this.submitted.has(slug) }
+  }
 
   async me(): Promise<User | undefined> {
     return this.#signedIn ? { login: 'test', name: 'Test Person', avatar: '', role: 'write' } : undefined
   }
 
-  async save(objects: { id: string; text: string }[]): Promise<void> {
+  async save(session: SessionRef, objects: { id: string; text: string }[], deleted: string[]): Promise<Pull | undefined> {
     await sleep(150)
+    if (this.submitted.has(session.slug) && !this.closed) throw new Locked()
     if (objects.some((o) => /failsave/.test(o.text))) throw new Error('Speichern fehlgeschlagen (Test).')
-    for (const o of objects) this.saved.set(o.id, o.text)
+    if (this.closed) {
+      this.submitted.delete(session.slug)
+      this.#pulls.delete(session.slug)
+      this.closed = false
+    }
+    const branch = this.branches.get(session.slug) ?? new Map<string, string>()
+    this.branches.set(session.slug, branch)
+    this.names.set(session.slug, session.name)
+    for (const o of objects) branch.set(o.id, o.text)
+    for (const id of deleted) branch.delete(id)
+    return branch.size > 0 || objects.length > 0 ? this.#pullOf(session.slug) : undefined
   }
 
-  async submit(): Promise<Pull> {
+  async submit(session: SessionRef): Promise<Pull> {
     await sleep(150)
-    return { number: 1, url: 'https://example.org/pull/1', state: 'open', merged: false }
+    this.submitted.add(session.slug)
+    return this.#pullOf(session.slug)
+  }
+
+  async rename(session: SessionRef): Promise<void> {
+    this.names.set(session.slug, session.name)
   }
 
   async pull(number: number): Promise<Pull> {
-    return { number, url: 'https://example.org/pull/1', state: this.merged ? 'closed' : 'open', merged: this.merged }
+    return { number, url: `https://example.org/pull/${number}`, state: this.merged || this.closed ? 'closed' : 'open', merged: this.merged, draft: false }
   }
 
   async logout(): Promise<void> {

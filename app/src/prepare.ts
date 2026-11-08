@@ -60,6 +60,7 @@ export async function prepareFile(file: File, onProgress: (fraction: number) => 
 
   const sha256 = await hashWithProgress(file, onProgress)
   const entry: FileEntry = {
+    original_name: file.name,
     path: originalPath(sha256, ext),
     sha256,
     mime: file.type || 'application/octet-stream',

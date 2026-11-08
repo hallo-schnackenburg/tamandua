@@ -14,7 +14,7 @@ import { BadRequest, buildModelRequest, parseChatRequest, toToolCalls } from './
 import { parseUploadRequest, planUpload, s3Config, type UploadEnv } from './upload.js'
 import { handleAuth, readSession, type AuthEnv } from './auth.js'
 import { handleRepo } from './repo.js'
-import type { Session } from './session.js'
+import type { Auth } from './session.js'
 
 export interface Env extends GeocodeEnv, UploadEnv, AuthEnv {
   ANTHROPIC_API_KEY?: string
@@ -70,7 +70,7 @@ export async function handle(
 async function signedRoute(
   request: Request,
   route: string,
-  session: Session,
+  session: Auth,
   env: Env,
   fetchFn: typeof fetch,
   pause?: (ms: number) => Promise<void>,

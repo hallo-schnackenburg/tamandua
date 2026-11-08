@@ -47,7 +47,7 @@
 </script>
 
 <div class="list">
-  {#each ws.objects as object (object.id)}
+  {#each ws.shown as object (object.id)}
     {@const info = summary(object)}
     {@const open = active?.id === object.id}
     <div
@@ -89,7 +89,7 @@
         <div class="body">
           <!-- {#key}: a new editor per object, so that undo never reaches into another object. -->
           {#key object.id}
-            <Editor value={object.text} {diagnostics} onchange={(next) => ws.updateText(next)} />
+            <Editor value={object.text} {diagnostics} readonly={!ws.writable(object)} onchange={(next) => ws.updateText(next)} />
           {/key}
           {#if issues.length > 0}
             <ul class="issues" aria-label="Probleme">
@@ -103,10 +103,10 @@
     </div>
   {/each}
 
-  {#if ws.objects.length === 0}
+  {#if ws.shown.length === 0}
     <p class="empty-state">
       <span>Keine Objekte</span>
-      <small>Lege Dateien ab und beschreibe sie.</small>
+      <small>{ws.current && ws.current.state !== 'open' ? 'Diese Sitzung ist leer.' : 'Lege Dateien ab und beschreibe sie.'}</small>
     </p>
   {/if}
 </div>
