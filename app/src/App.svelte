@@ -90,6 +90,7 @@
   {#if ws.login.state === 'user'}
     {@const user = ws.login.user}
     <header>
+      <img class="logo" src={`${import.meta.env.BASE_URL}tamandua.png`} alt="Tamandua" title="Tamandua" height="52" />
       <Sessions workspace={ws} />
       {#if ws.current?.state === 'submitted'}
         <span class="state submitted">Eingereicht</span>
@@ -162,6 +163,7 @@
     <div class="welcome"><p class="quiet">Einen Moment …</p></div>
   {:else}
     <div class="welcome">
+      <img class="logo big" src={`${import.meta.env.BASE_URL}tamandua.png`} alt="" height="96" />
       <h1>Tamandua</h1>
       <p>Hier erfasst du Objekte des Archivs.</p>
       {#if ws.login.state === 'anonymous'}
@@ -179,7 +181,7 @@
 <style>
   main { display: flex; flex-direction: column; gap: 12px; height: 100%; padding: 12px; }
   /* A raised white bar: the session is the center of it, its state or the way forward stands right next to it. */
-  header { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; padding: 8px 14px; background: #fff; border-radius: var(--r-l); box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 14px rgb(0 0 0 / 0.05); }
+  header { position: relative; display: flex; align-items: center; gap: 12px; font-size: 0.9rem; padding: 8px 14px 8px 84px; background: #fff; border-radius: var(--r-l); box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 14px rgb(0 0 0 / 0.05); }
   .spacer { flex: 1; }
   .sync { color: #777; }
   .sync.failed { color: #a11; }
@@ -205,6 +207,9 @@
   button.link { border: 0; background: none; color: #36c; padding: 4px; }
   .welcome { margin: auto; max-width: 28rem; text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: center; }
   .welcome h1 { margin: 0; }
+  /* The logo sits on the header and reaches a little over its lower edge; the header leaves room for it on the left. */
+  .logo { position: absolute; left: 14px; top: 9px; height: 50px; width: auto; }
+  .logo.big { position: static; display: block; height: 96px; }
   .welcome p { margin: 0; }
   .button { display: inline-block; padding: 8px 16px; border-radius: var(--r-m); text-decoration: none; }
   .notice { color: #a11; }
