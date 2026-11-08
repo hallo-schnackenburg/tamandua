@@ -500,7 +500,10 @@ export class Workspace {
     const sentences: string[] = []
     const here = batch.duplicates.filter((name) => !batch.elsewhere.some((e) => e.name === name))
     const fresh = batch.shas.length - here.length
-    if (fresh > 0 && !batch.objectId) {
+    // The question is asked once: more drops while it is still the last thing said do not repeat it.
+    const last = [...this.chat].reverse().find((m) => m.role !== 'log' && m !== undefined)
+    const asked = !!last && last.role === 'assistant' && last.text.endsWith('Möchtest du sie jetzt beschreiben?')
+    if (fresh > 0 && !batch.objectId && !asked) {
       sentences.push(`Du hast ${fresh === 1 ? 'eine Datei' : `${fresh} Dateien`} abgelegt, ${fresh === 1 ? 'sie wird' : 'sie werden'} gerade hochgeladen.`)
     }
     if (here.length) {
@@ -509,7 +512,7 @@ export class Workspace {
     for (const { name, session } of batch.elsewhere.slice(0, 3)) sentences.push(`Die Datei „${name}“ gehört schon zur Sitzung „${session}“.`)
     if (batch.elsewhere.length > 3) sentences.push(`${batch.elsewhere.length - 3} weitere Dateien gehören schon zu anderen Sitzungen.`)
     if (batch.unreadable.length) sentences.push(`${them(batch.unreadable)} ${batch.unreadable.length === 1 ? 'konnte' : 'konnten'} nicht gelesen werden ${names(batch.unreadable)}.`)
-    if (fresh > 0 && !batch.objectId) sentences.push('Möchtest du sie jetzt beschreiben?')
+    if (fresh > 0 && !batch.objectId && !asked) sentences.push('Möchtest du sie jetzt beschreiben?')
     if (sentences.length) this.#say('assistant', sentences.join(' '))
     if (!batch.objectId && batch.shas.length > 0) {
       // Dropping is a deliberate act: the dropped files become the selection, whatever was selected before.

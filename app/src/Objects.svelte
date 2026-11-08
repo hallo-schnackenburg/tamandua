@@ -3,6 +3,7 @@
   import type { Diagnostic } from '@codemirror/lint'
   import Editor from './Editor.svelte'
   import { objectLabel } from './labels.js'
+  import { validityOf } from './validity.js'
   import type { ObjectRecord, Workspace } from './workspace.svelte.js'
 
   const STANDING = {
@@ -37,7 +38,7 @@
       kind: objectLabel(type, readField(object.text, 'subtype')),
       date: date === undefined || date === null ? '' : String(date),
       files,
-      problems: validateObjectYaml(object.text).length,
+      validity: validityOf(object.text),
     }
   }
 
@@ -87,14 +88,13 @@
             {info.files === 1 ? 'Datei' : 'Dateien'}
           </span>
         </span>
-        {#if info.problems > 0}<span class="problems">{info.problems} offen</span>{/if}
         <!-- The type is what the row says; the standing only takes its place while there is something to report. -->
         {#if standing === 'local' || standing === 'changed' || standing === 'saving' || standing === 'failed'}
           <span class="standing {standing}" title={STANDING[standing].hint}>
             {#if standing === 'saving'}<span class="spinner" aria-hidden="true"></span>{/if}{STANDING[standing].label}
           </span>
         {:else if info.kind}
-          <span class="kind">{info.kind}</span>
+          <span class="kind" title={info.validity.hint}><i class="dot {info.validity.state}"></i>{info.kind}</span>
         {/if}
       </button>
       {#if open}
@@ -125,7 +125,7 @@
 
 <style>
   .list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-  .row { flex: none; overflow: hidden; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
+  .row { flex: none; overflow: hidden; border: 1px solid #ddd; border-radius: var(--r-m); background: #fff; }
   .row.open { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 16rem; }
   .row.open, .row.over { border-color: #36c; }
   .row.over { background: #eef3ff; }
@@ -135,17 +135,19 @@
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title.empty { font-weight: 400; color: #999; }
   .sub { font-size: 0.78rem; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .kind { font-size: 0.72rem; color: #666; background: #f0f0ee; white-space: nowrap; border-radius: 10px; padding: 1px 9px; }
-  .standing { font-size: 0.72rem; color: #888; white-space: nowrap; border: 1px solid #ddd; border-radius: 10px; padding: 0 7px; }
+  .kind { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; color: #666; background: #f0f0ee; white-space: nowrap; border-radius: 999px; padding: 1px 9px; }
+  .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #3aa655; }
+  .dot.incomplete { background: #e0b400; }
+  .dot.invalid { background: #c92a2a; }
+  .standing { font-size: 0.72rem; color: #888; white-space: nowrap; border: 1px solid #ddd; border-radius: 999px; padding: 0 7px; }
   .standing.saved, .standing.submitted { color: #36c; border-color: #b9c8ee; }
   .standing.merged { color: #2a7a3b; border-color: #b5dcbd; }
   .standing.saving { color: #36c; border-color: #b9c8ee; display: inline-flex; align-items: center; gap: 5px; }
   .standing.failed { color: #a11; border-color: #e3b5b5; }
   .spinner { width: 9px; height: 9px; border: 1.5px solid #b9c8ee; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .problems { font-size: 0.78rem; color: #a11; white-space: nowrap; }
   .body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border-top: 1px solid #eee; }
   .issues { margin: 0; padding: 6px 10px; list-style: none; font-size: 0.9rem; border-top: 1px solid #eee; max-height: 8rem; overflow: auto; }
   .issues li { padding: 2px 0; color: #a11; }
-  code { background: #eee; padding: 0 4px; border-radius: 3px; }
+  code { background: #eee; padding: 0 4px; border-radius: var(--r-s); }
 </style>

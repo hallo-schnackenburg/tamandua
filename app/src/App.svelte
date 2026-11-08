@@ -34,6 +34,19 @@
 
   let confirming = $state(false)
 
+  // While the corner radii are being tried out (dev only): a slider scales all three steps; the value is kept in this browser.
+  let scale = $state((() => { try { return Number(localStorage.getItem('tamandua.scale') ?? 1) } catch { return 1 } })())
+  $effect(() => {
+    document.documentElement.style.setProperty('--scale', String(scale))
+    try { localStorage.setItem('tamandua.scale', String(scale)) } catch {}
+  })
+
+  function pick(event: Event) {
+    const input = event.currentTarget as HTMLInputElement
+    ws.addDropped(input.files ?? [])
+    input.value = '' // so that the same file can be picked again
+  }
+
   onMount(() => {
     if (import.meta.env.DEV) {
       ;(window as unknown as { workspace: Workspace }).workspace = ws // for the console and the browser tests
@@ -109,6 +122,13 @@
         <span class="sync failed">Nicht gespeichert: Änderungen gehen verloren, wenn du die Seite schließt.</span>
       {/if}
       <span class="spacer"></span>
+      {#if import.meta.env.DEV}
+        <label class="scale" title="Rundung der Ecken (nur beim Entwickeln)">
+          Rundung
+          <input type="range" min="0" max="3" step="0.1" bind:value={scale} />
+          <output>{scale.toFixed(1)}×</output>
+        </label>
+      {/if}
       <span class="user">
         {#if user.avatar}<img src={user.avatar} alt="" width="24" height="24" />{/if}
         {user.name || user.login}
@@ -123,7 +143,13 @@
       </section>
 
       <section class="pane">
-        <h2>Dateien</h2>
+        <h2>
+          Dateien
+          <label class="add" title="Dateien hinzufügen" aria-label="Dateien hinzufügen">
+            +
+            <input type="file" multiple onchange={pick} />
+          </label>
+        </h2>
         <Files workspace={ws} />
       </section>
 
@@ -167,7 +193,7 @@
 <style>
   main { display: flex; flex-direction: column; gap: 12px; height: 100%; padding: 12px; }
   /* A raised white bar: the session is the center of it, its state or the way forward stands right next to it. */
-  header { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; padding: 8px 14px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 14px rgb(0 0 0 / 0.05); }
+  header { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; padding: 8px 14px; background: #fff; border-radius: var(--r-l); box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 14px rgb(0 0 0 / 0.05); }
   .spacer { flex: 1; }
   .sync { color: #777; }
   .sync.failed { color: #a11; }
@@ -181,19 +207,24 @@
   button.submit { height: 2.3rem; padding: 0 18px; border-radius: 999px; border: 0; background: #36c; color: #fff; font-weight: 600; box-shadow: 0 1px 2px rgb(51 102 204 / 0.35); }
   button.submit:hover:not(:disabled) { background: #2a58b8; }
   button.plain { border-radius: 999px; }
+  .add { margin-left: auto; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 50%; color: #36c; font-size: 1.3rem; font-weight: 400; line-height: 1; cursor: pointer; }
+  .add:hover { background: #eef2fb; }
+  .add input { display: none; }
+  .scale { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; color: #888; }
+  .scale input { width: 90px; }
   .user { display: inline-flex; align-items: center; gap: 6px; }
   .user img { border-radius: 50%; }
   .confirm { display: inline-flex; align-items: center; gap: 8px; }
-  button { font: inherit; padding: 4px 10px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
+  button { font: inherit; padding: 4px 10px; border: 1px solid #ccc; border-radius: var(--r-m); background: #fff; cursor: pointer; }
   button.primary, a.primary { background: #36c; border-color: #36c; color: #fff; }
   button:disabled { opacity: 0.45; cursor: default; }
   button.link { border: 0; background: none; color: #36c; padding: 4px; }
   .welcome { margin: auto; max-width: 28rem; text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: center; }
   .welcome h1 { margin: 0; }
   .welcome p { margin: 0; }
-  .button { display: inline-block; padding: 8px 16px; border-radius: 6px; text-decoration: none; }
+  .button { display: inline-block; padding: 8px 16px; border-radius: var(--r-m); text-decoration: none; }
   .notice { color: #a11; }
-  .banner { margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; font-size: 0.85rem; background: #eef2fb; color: #345; }
+  .banner { margin: 0 0 8px; padding: 6px 10px; border-radius: var(--r-m); font-size: 0.85rem; background: #eef2fb; color: #345; }
   .banner.submitted { background: #fdebd7; color: #7a4308; }
   .banner.merged { background: #edf7ef; }
   .banner a { color: #36c; margin: 0 4px; }
@@ -202,6 +233,6 @@
   /* The hint of an empty pane: centered below the heading, on the same height in every pane. */
   :global(.empty-state) { position: absolute; margin: 0; padding: 0; inset: calc(20px + 1.6rem) 12px 12px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; line-height: 1.3; color: #aaa; text-align: center; pointer-events: none; }
   :global(.empty-state small) { font-size: 0.78rem; color: #c4c4c4; }
-  .pane { position: relative; display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: 6px; padding: 12px; }
+  .pane { position: relative; display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: var(--r-m); padding: 12px; }
   h2 { display: flex; align-items: center; height: 1.6rem; margin: 0 0 8px; font-size: 1rem; }
 </style>

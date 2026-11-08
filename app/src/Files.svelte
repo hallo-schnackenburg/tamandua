@@ -1,10 +1,15 @@
 <script lang="ts">
+  import { readField } from '@tamandua/core'
+  import { objectLabel } from './labels.js'
+  import { validityOf } from './validity.js'
   import type { FileRecord, Workspace } from './workspace.svelte.js'
 
   let { workspace: ws }: { workspace: Workspace } = $props()
 
   const objectsById = $derived(new Map(ws.objects.map((o) => [o.id, o])))
   const selected = $derived(new Set(ws.selection))
+  // What the badge on a tile says: the kind of the object the file belongs to.
+  const kindOf = (text: string) => objectLabel(readField(text, 'type'), readField(text, 'subtype'))
 
   // One address per preview image; created when first shown.
   const urls = new WeakMap<Blob, string>()
@@ -116,12 +121,6 @@
     over = false
     ws.addDropped(event.dataTransfer?.files ?? [])
   }
-
-  function onpick(event: Event) {
-    const input = event.currentTarget as HTMLInputElement
-    ws.addDropped(input.files ?? [])
-    input.value = '' // so that the same file can be picked again
-  }
 </script>
 
 {#snippet badge(kind: 'progress' | 'ok' | 'bad', progress: number, message?: string)}
@@ -162,11 +161,10 @@
   {ondrop}
 >
   {#if ws.visibleFiles.length === 0 && ws.pending.length === 0}
-    <label class="hint empty-state">
+    <p class="empty-state">
       <span>Dateien hierher ziehen</span>
       <small>oder klicken zum Auswählen</small>
-      <input type="file" multiple onchange={onpick} />
-    </label>
+    </p>
   {:else}
     <div class="grid">
       {#each ws.visibleFiles as file (file.sha256)}
@@ -202,10 +200,12 @@
             {/if}
             {#if file.status === 'uploading'}
               {@render badge('progress', file.progress ?? 0)}
-            {:else if file.status === 'uploaded'}
-              {@render badge('ok', 1)}
-            {:else}
+            {:else if file.status === 'error' || file.status === 'conflict'}
               {@render badge('bad', 1, file.message)}
+            {/if}
+            {#if object && kindOf(object.text)}
+              {@const validity = validityOf(object.text)}
+              <span class="kind" title={validity.hint}><i class="dot {validity.state}"></i>{kindOf(object.text)}</span>
             {/if}
           </span>
           <span class="name">{file.name}</span>
@@ -225,13 +225,6 @@
           {/if}
         </div>
       {/each}
-
-      <!-- The place to put more files, always after the last tile. The whole pane takes files too. -->
-      <label class="drop">
-        <span>Dateien hier ablegen</span>
-        <small>oder klicken zum Auswählen</small>
-        <input type="file" multiple onchange={onpick} />
-      </label>
     </div>
   {/if}
   {#if over}<div class="overlay">Zum Hinzufügen loslassen</div>{/if}
@@ -250,34 +243,34 @@
 
 <style>
   .zone { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .hint { pointer-events: auto; cursor: pointer; }
-  input[type='file'] { display: none; }
   .close { border: 0; background: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 2px; }
-  :global(main .pane.drop::after) { content: ''; position: absolute; inset: 0; border-radius: 6px; background: rgba(157, 188, 247, 0.5); pointer-events: none; }
+  :global(main .pane.drop::after) { content: ''; position: absolute; inset: 0; border-radius: var(--r-m); background: rgba(157, 188, 247, 0.5); pointer-events: none; }
   .overlay { position: absolute; z-index: 2; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 0.5rem 1rem; border-radius: 999px; background: rgba(255, 255, 255, 0.92); color: #36c; font-weight: 600; pointer-events: none; }
 
-  .drop { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 10px; border: 1.5px dashed #d6d6d6; border-radius: 8px; color: #888; font-size: 0.85rem; cursor: pointer; text-align: center; }
-  .drop span { font-weight: 600; color: #666; }
-  .drop small { font-size: 0.75rem; color: #aaa; }
-  .drop:hover { border-color: #8fadea; background: #f6f9ff; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; overflow: auto; align-content: start; padding: 4px; }
-  .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 5px; text-align: left; font: inherit; font-size: 0.78rem; background: #fff; border: 1px solid #e6e6e6; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
-  /* One highlight color: blue is what is open or picked. Gray marks files that are used by an object, white ones are free. */
-  .tile.assigned { background: #ececec; }
-  .tile.current { border-color: #36c; }
-  .tile.peek { background: #c9d9f7; border-color: #8fadea; }
-  .tile.selected { background: #dbe7fd; }
+  /* A tile is the picture with its name below, no box. What is open or picked shows as a ring around the picture. */
+  .tile { position: relative; display: flex; flex-direction: column; gap: 5px; text-align: left; font: inherit; font-size: 0.78rem; cursor: pointer; user-select: none; min-width: 0; }
+  .thumb { position: relative; display: block; border-radius: var(--r-m); overflow: hidden; box-shadow: 0 0 0 1px #e3e3e3; }
+  .tile.current .thumb { box-shadow: 0 0 0 2px #36c; }
+  .tile.selected .thumb { box-shadow: 0 0 0 2px #9db8ee; }
+  .tile.current.selected .thumb { box-shadow: 0 0 0 2px #36c; }
+  .tile.peek .thumb { box-shadow: 0 0 0 2px #8fadea; }
   .tile.dragged { opacity: 0.5; }
   .tile.foreign { opacity: 0.35; cursor: default; }
   .tile.pending { cursor: default; }
-  .tile.failed { border-color: #c92a2a; }
-  .tile img, .noimg { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; background: #e9e9e9; }
+  .tile.failed .thumb { box-shadow: 0 0 0 2px #c92a2a; }
+  .tile img, .noimg { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #ececec; }
   .noimg { display: flex; align-items: center; justify-content: center; color: #888; text-transform: uppercase; font-weight: 600; }
-  .ghost { position: fixed; z-index: 10; pointer-events: none; opacity: 0.92; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25); cursor: grabbing; }
-  .count { position: absolute; top: 6px; right: 6px; min-width: 1.4em; padding: 0 5px; border-radius: 10px; background: #1c1c1c; color: #fff; font-weight: 700; text-align: center; }
-  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kind { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 8px; border-radius: 999px; background: #fff; color: #555; font-size: 0.7rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+  .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #3aa655; }
+  .dot.incomplete { background: #e0b400; }
+  .dot.invalid { background: #c92a2a; }
+  .ghost img, .ghost .noimg { border-radius: var(--r-s); }
+  .ghost { position: fixed; padding: 5px; gap: 3px; background: #fff; border: 1px solid #ccc; border-radius: var(--r-m); z-index: 10; pointer-events: none; opacity: 0.92; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25); cursor: grabbing; }
+  .count { position: absolute; top: 6px; right: 6px; min-width: 1.4em; padding: 0 5px; border-radius: 999px; background: #1c1c1c; color: #fff; font-weight: 700; text-align: center; }
+  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 5px; font-size: 0.72rem; color: #888; }
   .thumb { position: relative; display: block; }
-  .badge { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06); font-size: 0.8rem; font-weight: 700; line-height: 1; pointer-events: none; }
+  .badge { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06); font-size: 0.8rem; font-weight: 700; line-height: 1; pointer-events: none; }
   .badge.ok { color: #2b8a3e; }
   .badge.bad { background: #c92a2a; color: #fff; }
   .state.bad { font-size: 0.72rem; line-height: 1.2; color: #c92a2a; }

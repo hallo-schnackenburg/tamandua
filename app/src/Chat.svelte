@@ -109,15 +109,16 @@
 
 <style>
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
-  .log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-  p { margin: 0; padding: 6px 10px; border-radius: 8px; max-width: 92%; white-space: pre-line; font-size: 0.92rem; }
-  .user { align-self: flex-end; background: #dbe7fd; }
-  .assistant { align-self: flex-start; background: #f1f1f1; }
+  .log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+  p { margin: 0; padding: 6px 10px; border-radius: var(--r-m); max-width: 92%; white-space: pre-line; font-size: 0.92rem; }
+  /* The person speaks on the right, in a blue bubble; the answers stand on the left, without a bubble, and leave room around them. */
+  .user { align-self: flex-end; max-width: 88%; background: #dbe7fd; }
+  .assistant { align-self: flex-start; max-width: 88%; padding: 4px 2px; background: none; }
   .status { align-self: stretch; max-width: none; background: none; border-left: 3px solid #bbb; border-radius: 0; color: #555; font-size: 0.82rem; }
   .wait { color: #888; }
-  .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px; border: 1px solid #e2e0dc; border-radius: 18px; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06); }
+  .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px; border: 1px solid #e2e0dc; border-radius: var(--r-l); background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06); }
   .composer:focus-within { border-color: #c9c6c0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.09); }
-  .subject { font-size: 0.8rem; color: #6b5a1e; padding: 2px 8px; background: #f7f0d2; border-radius: 10px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subject { font-size: 0.8rem; color: #6b5a1e; padding: 2px 8px; background: #f7f0d2; border-radius: 999px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   textarea { resize: none; font: inherit; line-height: 1.4; min-height: 1.4em; padding: 2px 40px 2px 2px; border: 0; outline: none; background: transparent; }
   textarea::placeholder { color: #aaa; }
   .send { position: absolute; right: 8px; bottom: 8px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: #1f1f1f; color: #fff; cursor: pointer; }
