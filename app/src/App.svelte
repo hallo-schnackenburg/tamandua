@@ -63,11 +63,18 @@
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
+    // Another window in front, the tab still visible: save as well.
+    const onBlur = () => {
+      void ws.flush()
+      ws.leave()
+    }
+    window.addEventListener('blur', onBlur)
     const poll = setInterval(() => document.visibilityState === 'visible' && void ws.checkPulls(), 60_000)
     return () => {
       stopSignedOut()
       clearInterval(poll)
       document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('blur', onBlur)
     }
   })
 
@@ -107,7 +114,7 @@
       <span class="spacer"></span>
       {#if confirming}
         <span class="confirm">
-          Sitzung „{ws.current?.name}“ einreichen?
+          Sitzung einreichen?
           <button class="primary" onclick={() => { confirming = false; void ws.submit() }}>Ja, einreichen</button>
           <button onclick={() => (confirming = false)}>Abbrechen</button>
         </span>

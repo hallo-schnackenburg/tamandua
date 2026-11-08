@@ -388,6 +388,7 @@ export class Workspace {
 
   selectSession(id: string) {
     if (!this.sessions.some((s) => s.id === id)) return
+    this.leave()
     this.currentId = id
     this.selection = []
     this.active = undefined
@@ -606,6 +607,7 @@ export class Workspace {
       this.selection = [sha256]
       this.#anchor = sha256
     }
+    this.leave()
     this.active = sha256
     this.#markUi()
     this.focusTick++ // typing goes to the chat from here on
@@ -615,6 +617,7 @@ export class Workspace {
   activate(objectId: string) {
     const files = this.files.filter((f) => f.objectId === objectId)
     if (files.length === 0) return
+    this.leave()
     this.selection = files.map((f) => f.sha256)
     this.picked = false // the object's files are selected, but dragging one tile moves only that one
     this.#anchor = files[0].sha256
@@ -625,6 +628,7 @@ export class Workspace {
 
   /** Closes the open object. The selection stays. */
   collapse() {
+    this.leave()
     this.active = undefined
     this.#markUi()
     this.focusTick++
@@ -664,7 +668,7 @@ export class Workspace {
     }
     if (files.length === 0) return
     if (readField(target.text, 'type') === 'image' && this.files.some((f) => f.objectId === objectId)) {
-      this.#say('log', `Objekt ${target.number} ist ein Bild und hat schon eine Datei.`)
+      this.#say('assistant', `${refer(target)} ist ein Bild und kann nur eine Datei haben. Die zweite Datei braucht ein eigenes Objekt, oder der Typ muss „Dokument“ sein.`)
       return
     }
 
@@ -1145,9 +1149,20 @@ export class Workspace {
     return 'saved'
   }
 
+  #typingPending = false
+
   #stopTimers() {
     clearTimeout(this.#appTimer)
     clearTimeout(this.#typingTimer)
+    this.#typingPending = false
+  }
+
+  /**
+   * The person turns to something else (another object, another session, another window): what was typed so far
+   * is saved now and not after the quiet half minute.
+   */
+  leave() {
+    if (this.#typingPending) void this.sync()
   }
 
   /** The app changed something: save in a second (the changes of one answer go into one commit). */
@@ -1161,6 +1176,7 @@ export class Workspace {
   #syncAfterTyping(delay = TYPING_DELAY) {
     if (this.login.state !== 'user') return
     clearTimeout(this.#typingTimer)
+    this.#typingPending = delay === TYPING_DELAY
     this.#typingTimer = setTimeout(() => void this.sync(), delay)
   }
 

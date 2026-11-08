@@ -52,11 +52,13 @@
     value: string
     diagnostics: Diagnostic[]
     onchange: (text: string) => void
+    /** The editor lost the focus: the person turned to something else. */
+    onleave?: () => void
     /** A submitted session is frozen: the text can be read and selected, not changed. */
     readonly?: boolean
   }
 
-  let { value, diagnostics, onchange, readonly = false }: Props = $props()
+  let { value, diagnostics, onchange, onleave, readonly = false }: Props = $props()
 
   let host: HTMLDivElement
   // $state.raw: effects below re-run when the editor exists, but its insides are not tracked.
@@ -76,6 +78,7 @@
         locking.of(lock(readonly)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onchange(update.state.doc.toString())
+          if (update.focusChanged && !update.view.hasFocus) onleave?.()
         }),
       ],
     })

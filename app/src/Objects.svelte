@@ -89,7 +89,7 @@
         <div class="body">
           <!-- {#key}: a new editor per object, so that undo never reaches into another object. -->
           {#key object.id}
-            <Editor value={object.text} {diagnostics} readonly={!ws.writable(object)} onchange={(next) => ws.updateText(next)} />
+            <Editor value={object.text} {diagnostics} readonly={!ws.writable(object)} onchange={(next) => ws.updateText(next)} onleave={() => ws.leave()} />
           {/key}
           {#if issues.length > 0}
             <ul class="issues" aria-label="Probleme">
