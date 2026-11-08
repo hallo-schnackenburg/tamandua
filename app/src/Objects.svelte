@@ -130,11 +130,13 @@
   .row.open, .row.over { border-color: #36c; }
   .row.over { background: #eef3ff; }
   .row.peek { background: #d9e5fa; border-color: #8fadea; }
-  .head { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 12px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
-  .main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-  .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .head { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 11px 12px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
+  .main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+  .title { font-size: 0.85rem; line-height: 1.3; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title.empty { font-weight: 400; color: #999; }
-  .sub { font-size: 0.78rem; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub { font-size: 0.75rem; line-height: 1.3; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The badge on the right sits level with the title, not in the middle of the two lines. */
+  .kind, .standing { align-self: flex-start; margin-top: 1px; }
   .kind { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; color: #666; background: #f0f0ee; white-space: nowrap; border-radius: 999px; padding: 1px 9px; }
   .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #3aa655; }
   .dot.incomplete { background: #e0b400; }

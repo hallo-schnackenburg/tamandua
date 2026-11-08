@@ -111,9 +111,9 @@
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
   .log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
   p { margin: 0; padding: 6px 10px; border-radius: var(--r-m); max-width: 92%; white-space: pre-line; font-size: 0.92rem; }
-  /* The person speaks on the right, in a blue bubble; the answers stand on the left, without a bubble, and leave room around them. */
+  /* The person speaks on the right, in a blue bubble; the answers stand on the left, in a light warm gray bubble. */
   .user { align-self: flex-end; max-width: 88%; background: #dbe7fd; }
-  .assistant { align-self: flex-start; max-width: 88%; padding: 4px 2px; background: none; }
+  .assistant { align-self: flex-start; max-width: 88%; background: #f3f2ee; }
   .status { align-self: stretch; max-width: none; background: none; border-left: 3px solid #bbb; border-radius: 0; color: #555; font-size: 0.82rem; }
   .wait { color: #888; }
   .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px; border: 1px solid #e2e0dc; border-radius: var(--r-l); background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06); }

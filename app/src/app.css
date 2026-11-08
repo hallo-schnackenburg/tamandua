@@ -1,5 +1,5 @@
-/* Corner radii: three steps, all scaled by --scale (the switch in the header while developing). */
-:root { --scale: 1; --r-s: calc(3px * var(--scale)); --r-m: calc(6px * var(--scale)); --r-l: calc(10px * var(--scale)); }
+/* Corner radii: three steps. */
+:root { --r-s: 3px; --r-m: 6px; --r-l: 10px; }
 
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }

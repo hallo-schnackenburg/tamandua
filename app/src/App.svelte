@@ -34,13 +34,6 @@
 
   let confirming = $state(false)
 
-  // While the corner radii are being tried out (dev only): a slider scales all three steps; the value is kept in this browser.
-  let scale = $state((() => { try { return Number(localStorage.getItem('tamandua.scale') ?? 1) } catch { return 1 } })())
-  $effect(() => {
-    document.documentElement.style.setProperty('--scale', String(scale))
-    try { localStorage.setItem('tamandua.scale', String(scale)) } catch {}
-  })
-
   function pick(event: Event) {
     const input = event.currentTarget as HTMLInputElement
     ws.addDropped(input.files ?? [])
@@ -122,13 +115,6 @@
         <span class="sync failed">Nicht gespeichert: Änderungen gehen verloren, wenn du die Seite schließt.</span>
       {/if}
       <span class="spacer"></span>
-      {#if import.meta.env.DEV}
-        <label class="scale" title="Rundung der Ecken (nur beim Entwickeln)">
-          Rundung
-          <input type="range" min="0" max="3" step="0.1" bind:value={scale} />
-          <output>{scale.toFixed(1)}×</output>
-        </label>
-      {/if}
       <span class="user">
         {#if user.avatar}<img src={user.avatar} alt="" width="24" height="24" />{/if}
         {user.name || user.login}
@@ -210,8 +196,6 @@
   .add { margin-left: auto; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 50%; color: #36c; font-size: 1.3rem; font-weight: 400; line-height: 1; cursor: pointer; }
   .add:hover { background: #eef2fb; }
   .add input { display: none; }
-  .scale { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; color: #888; }
-  .scale input { width: 90px; }
   .user { display: inline-flex; align-items: center; gap: 6px; }
   .user img { border-radius: 50%; }
   .confirm { display: inline-flex; align-items: center; gap: 8px; }

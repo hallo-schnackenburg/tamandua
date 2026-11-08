@@ -117,7 +117,7 @@
   .editor :global(.cm-editor) { flex: 1 1 auto; min-height: 0; }
   /* No line numbers, fold markers or lint markers for now; the text lines up with the title above. */
   .editor :global(.cm-gutters) { display: none; }
-  .editor :global(.cm-line) { padding-left: 10px; }
+  .editor :global(.cm-line) { padding-left: 12px; }
   .editor :global(.cm-editor.cm-focused) { outline: none; }
   .editor :global(.cm-scroller) { overflow: auto; }
   /* A frozen text has no cursor line to point out. */
