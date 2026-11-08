@@ -186,7 +186,6 @@ export class Repo {
       for (const path of removals) if (await this.exists(path, from)) gone.push(path)
       if (files.length === 0 && gone.length === 0) return null
 
-      if (!head) await this.call('POST', '/git/refs', { ref: `refs/heads/${branch}`, sha: from })
       const parent = await this.call<{ tree: { sha: string } }>('GET', `/git/commits/${from}`)
       const tree = await this.call<{ sha: string }>('POST', '/git/trees', {
         base_tree: parent.tree.sha,
@@ -195,6 +194,9 @@ export class Repo {
           ...gone.map((path) => ({ path, mode: '100644', type: 'blob', sha: null })),
         ],
       })
+      // Nothing differs from what is there: no commit (and no branch that would only point at the base).
+      if (tree.sha === parent.tree.sha) return null
+      if (!head) await this.call('POST', '/git/refs', { ref: `refs/heads/${branch}`, sha: from })
       const commit = await this.call<{ sha: string }>('POST', '/git/commits', { message, tree: tree.sha, parents: [from] })
       try {
         await this.call('PATCH', `/git/refs/heads/${branch}`, { sha: commit.sha })

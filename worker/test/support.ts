@@ -41,7 +41,7 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
   const state = {
     refs: { main: 'c0' } as Record<string, string>,
     commits: { c0: { tree: 't0', parents: [] as string[], message: 'start' } } as Record<string, { tree: string; parents: string[]; message: string }>,
-    trees: {} as Record<string, { base: string; entries: { path: string; content?: string; sha?: string | null }[]; paths: Set<string> }>,
+    trees: {} as Record<string, { base: string; entries: { path: string; content?: string; sha?: string | null }[]; paths: Set<string>; files: Map<string, string> }>,
     pulls: [] as { number: number; head: string; state: 'open' | 'closed'; merged: boolean; draft: boolean; title: string; body: string }[],
     calls: [] as Call[],
     revoked: 0,
@@ -95,11 +95,23 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     }
     if ((m = /^\/git\/commits\/(.+)$/.exec(path))) return reply({ tree: { sha: state.commits[m[1]].tree } })
     if (path === '/git/trees') {
-      const sha = `t${state.next++}`
       // What the tree contains: the base tree's paths, plus the written ones, minus the removed ones.
       const paths = new Set(state.trees[body.base_tree]?.paths ?? [])
-      for (const entry of body.tree) entry.sha === null ? paths.delete(entry.path) : paths.add(entry.path)
-      state.trees[sha] = { base: body.base_tree, entries: body.tree, paths }
+      const files = new Map(state.trees[body.base_tree]?.files ?? [])
+      for (const entry of body.tree) {
+        if (entry.sha === null) {
+          paths.delete(entry.path)
+          files.delete(entry.path)
+        } else {
+          paths.add(entry.path)
+          files.set(entry.path, entry.content ?? '')
+        }
+      }
+      // Like git, a tree with the same content is the same tree.
+      const same = Object.entries(state.trees).find(([, t]) => t.paths.size === paths.size && [...files].every(([k, v]) => t.files.get(k) === v) && t.files.size === files.size && [...paths].every((x) => t.paths.has(x)))
+      if (same) return reply({ sha: same[0] }, 201)
+      const sha = `t${state.next++}`
+      state.trees[sha] = { base: body.base_tree, entries: body.tree, paths, files }
       return reply({ sha }, 201)
     }
     if (path === '/git/commits') {

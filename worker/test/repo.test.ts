@@ -45,10 +45,28 @@ describe('POST /repo/save', () => {
   it('adds to the branch on the next save', async () => {
     const gh = fakeGitHub()
     const first = (await (await saveOf(gh, objects(ID_A))).json()) as { commit: string }
-    const second = (await (await saveOf(gh, objects(ID_A))).json()) as { commit: string }
+    const second = (await (await saveOf(gh, objects(ID_B))).json()) as { commit: string }
     expect(gh.state.commits[second.commit].parents).toEqual([first.commit])
     expect(gh.state.refs[BRANCH]).toBe(second.commit)
     expect(gh.state.commits[second.commit].message).toBe('Erfassung: 1 Objekt')
+  })
+
+  it('makes no commit when the objects are what the branch has already', async () => {
+    const gh = fakeGitHub()
+    const first = (await (await saveOf(gh, objects(ID_A))).json()) as { commit: string }
+    const again = (await (await saveOf(gh, objects(ID_A))).json()) as { commit: string | null }
+    expect(again.commit).toBeNull()
+    expect(gh.state.refs[BRANCH]).toBe(first.commit)
+    expect(Object.keys(gh.state.commits).filter((c) => gh.state.commits[c].message.startsWith('Erfassung'))).toHaveLength(1)
+  })
+
+  it('makes no branch when the objects are what main has already', async () => {
+    const gh = fakeGitHub()
+    await saveOf(gh, objects(ID_A))
+    gh.state.refs.main = gh.state.refs[BRANCH] // merged
+    const response = await saveOf(gh, { session: { slug: 'other-1', name: 'Other' }, objects: [{ id: ID_A, text: text(ID_A) }] })
+    expect(((await response.json()) as { commit: unknown }).commit).toBeNull()
+    expect(gh.state.refs['erfassung/anna/other-1']).toBeUndefined()
   })
 
   it('tries again once when the branch moved in the meantime', async () => {
