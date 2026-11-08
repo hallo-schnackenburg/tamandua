@@ -213,7 +213,7 @@
   .banner.merged { background: #edf7ef; }
   .banner a { color: #36c; margin: 0 4px; }
   .quiet { color: #888; font-size: 0.9rem; }
-  .panes { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1.6fr); /* minmax(0, …): long YAML lines must not widen the pane */ gap: 12px; min-height: 0; }
+  .panes { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); /* minmax(0, …): long YAML lines must not widen the pane */ gap: 12px; min-height: 0; }
   /* The hint of an empty pane: centered below the heading, on the same height in every pane. */
   :global(.empty-state) { position: absolute; margin: 0; padding: 0; inset: calc(20px + 1.6rem) 12px 12px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; line-height: 1.3; color: #aaa; text-align: center; pointer-events: none; }
   :global(.empty-state small) { font-size: 0.78rem; color: #c4c4c4; }
