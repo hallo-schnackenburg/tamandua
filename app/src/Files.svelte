@@ -250,7 +250,7 @@
   .overlay { position: absolute; z-index: 2; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 0.5rem 1rem; border-radius: 999px; background: rgba(255, 255, 255, 0.92); color: #36c; font-weight: 600; pointer-events: none; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; overflow: auto; align-content: start; padding: 4px; }
-  .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 4px; text-align: left; font: inherit; font-size: 0.78rem; background: #fff; border: 2px solid #e6e6e6; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
+  .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 5px; text-align: left; font: inherit; font-size: 0.78rem; background: #fff; border: 1px solid #e6e6e6; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
   /* One highlight color: blue is what is open or picked. Gray marks files that are used by an object, white ones are free. */
   .tile.assigned { background: #ececec; }
   .tile.current { border-color: #36c; }

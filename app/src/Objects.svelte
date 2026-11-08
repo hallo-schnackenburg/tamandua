@@ -119,7 +119,7 @@
 
 <style>
   .list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-  .row { flex: none; overflow: hidden; border: 2px solid #ddd; border-radius: 6px; background: #fff; }
+  .row { flex: none; overflow: hidden; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
   .row.open { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 16rem; }
   .row.open, .row.over { border-color: #36c; }
   .row.over { background: #eef3ff; }
