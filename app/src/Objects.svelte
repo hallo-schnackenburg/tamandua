@@ -8,6 +8,8 @@
   const STANDING = {
     local: { label: 'nur hier', hint: 'Noch nicht in GitHub gesichert.' },
     changed: { label: 'geändert', hint: 'Die letzte Änderung ist noch nicht in GitHub gesichert.' },
+    saving: { label: 'speichert', hint: 'Wird gerade in GitHub gesichert.' },
+    failed: { label: 'nicht gesichert', hint: 'Das Sichern in GitHub hat nicht geklappt. Es wird gleich noch einmal versucht.' },
     saved: { label: 'gesichert', hint: 'In GitHub gesichert, noch nicht eingereicht.' },
     submitted: { label: 'eingereicht', hint: 'Wird geprüft.' },
     merged: { label: 'übernommen', hint: 'Geprüft und ins Archiv übernommen.' },
@@ -54,6 +56,9 @@
       class="row"
       class:open
       class:over={ws.dragTarget === object.id}
+      class:peek={ws.hover === object.id && !open && ws.dragging.length === 0}
+      onpointerenter={() => (ws.hover = open ? undefined : object.id)}
+      onpointerleave={() => (ws.hover = undefined)}
       data-object-id={object.id}
       ondragover={(event) => {
         if (!event.dataTransfer?.types.includes('Files')) return // tiles are moved with the pointer, see Files.svelte
@@ -75,14 +80,16 @@
     >
       <button class="head" aria-expanded={open} onclick={() => (open ? ws.collapse() : ws.activate(object.id))}>
         <span class="main">
-          <span class="title" class:empty={!info.title}>{info.title || 'ohne Titel'}</span>
+          <span class="title" class:empty={!info.title}>{info.title || `Objekt ${object.number}`}</span>
           <span class="sub">
-            Objekt {object.number} · {info.kind}{info.date ? ` · ${info.date}` : ''} · {info.files}
+            {info.kind}{info.date ? ` · ${info.date}` : ''} · {info.files}
             {info.files === 1 ? 'Datei' : 'Dateien'}
           </span>
         </span>
         {#if info.problems > 0}<span class="problems">{info.problems} offen</span>{/if}
-        <span class="standing {ws.standing(object)}" title={STANDING[ws.standing(object)].hint}>{STANDING[ws.standing(object)].label}</span>
+        <span class="standing {ws.standing(object)}" title={STANDING[ws.standing(object)].hint}>
+          {#if ws.standing(object) === 'saving'}<span class="spinner" aria-hidden="true"></span>{/if}{STANDING[ws.standing(object)].label}
+        </span>
       </button>
       {#if open}
         <div class="body">
@@ -116,6 +123,7 @@
   .row.open { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 16rem; }
   .row.open, .row.over { border-color: #36c; }
   .row.over { background: #eef3ff; }
+  .row.peek { background: #d9e5fa; border-color: #8fadea; }
   .head { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
   .main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -124,6 +132,10 @@
   .standing { font-size: 0.72rem; color: #888; white-space: nowrap; border: 1px solid #ddd; border-radius: 10px; padding: 0 7px; }
   .standing.saved, .standing.submitted { color: #36c; border-color: #b9c8ee; }
   .standing.merged { color: #2a7a3b; border-color: #b5dcbd; }
+  .standing.saving { color: #36c; border-color: #b9c8ee; display: inline-flex; align-items: center; gap: 5px; }
+  .standing.failed { color: #a11; border-color: #e3b5b5; }
+  .spinner { width: 9px; height: 9px; border: 1.5px solid #b9c8ee; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .problems { font-size: 0.78rem; color: #a11; white-space: nowrap; }
   .body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border-top: 1px solid #eee; }
   .issues { margin: 0; padding: 6px 10px; list-style: none; font-size: 0.9rem; border-top: 1px solid #eee; max-height: 8rem; overflow: auto; }

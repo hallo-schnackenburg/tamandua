@@ -66,6 +66,7 @@
     if (ws.busy || !text.trim()) return
     const message = text
     text = ''
+    if (ws.command(message)) return
     hint = (hint + 1) % hints.length
     void ws.send(message)
   }

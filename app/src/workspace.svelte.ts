@@ -61,7 +61,7 @@ export interface Session {
 }
 
 /** Where an object stands, for the badge on its row. */
-export type Standing = 'local' | 'changed' | 'saved' | 'submitted' | 'merged'
+export type Standing = 'local' | 'changed' | 'saving' | 'failed' | 'saved' | 'submitted' | 'merged'
 
 export type Login =
   | { state: 'loading' }
@@ -77,6 +77,8 @@ export type Login =
 const APP_DELAY = 1_000
 const TYPING_DELAY = 30_000
 const SYNC_RETRY = 60_000
+/** How long a save is shown at least. */
+const MIN_SAVING = 500
 
 /** A file that is still being hashed, or could not be read. */
 export interface Pending {
@@ -212,6 +214,8 @@ export class Workspace {
   dragging = $state<string[]>([])
   /** The object whose row is under the dragged tiles, if any. */
   dragTarget = $state<string>()
+  /** The object the pointer rests on, or that belongs to the file it rests on; its counterpart in the other list is tinted. */
+  hover = $state<string>()
 
   /** The work sessions, and the one that is shown. */
   sessions = $state<Session[]>([])
@@ -222,6 +226,10 @@ export class Workspace {
   /** Saving to GitHub: `failed` is shown to the person, with the reason in `syncError`. */
   syncState = $state<'idle' | 'saving' | 'failed'>('idle')
   syncError = $state<string>()
+  /** The sessions and objects a save is running for right now, and the sessions whose last save failed. */
+  savingSessions = $state<string[]>([])
+  savingObjects = $state<string[]>([])
+  failedSessions = $state<string[]>([])
   /** True while the pull request is being opened. */
   submitting = $state(false)
 
@@ -1144,6 +1152,8 @@ export class Workspace {
   standing(object: ObjectRecord): Standing {
     const session = this.#sessionOf(object)
     if (session && session.state !== 'open') return session.state
+    if (this.savingObjects.includes(object.id)) return 'saving'
+    if (session && this.failedSessions.includes(session.id) && object.text !== object.synced) return 'failed'
     if (object.synced === undefined) return 'local'
     if (object.text !== object.synced) return 'changed'
     return 'saved'
@@ -1180,6 +1190,26 @@ export class Workspace {
     this.#typingTimer = setTimeout(() => void this.sync(), delay)
   }
 
+  /** Clears everything stored in the browser and starts again. What is on GitHub and in the bucket stays. */
+  async resetAll() {
+    this.#stopTimers()
+    await db.reset()
+    location.reload()
+  }
+
+  /**
+   * Commands typed into the chat. `/clear` starts again with an empty browser, but only in development;
+   * `/clear!` does so everywhere (it is not documented). Returns whether the text was a command.
+   */
+  command(text: string): boolean {
+    const word = text.trim()
+    if (word === '/clear!' || (import.meta.env.DEV && word === '/clear')) {
+      void this.resetAll()
+      return true
+    }
+    return false
+  }
+
   /** Saves every open session: its changed objects in one commit on its branch, and removes what was deleted. Returns whether everything is saved. */
   async sync(): Promise<boolean> {
     this.#stopTimers()
@@ -1196,48 +1226,72 @@ export class Workspace {
         deleted: [...session.deleted],
       }))
       .filter((w) => w.todo.length > 0 || w.deleted.length > 0)
-    if (work.length === 0) return true
+    // A session with nothing left to save has nothing that failed (e.g. the change was undone).
+    this.failedSessions = this.failedSessions.filter((id) => work.some((w) => w.session.id === id))
+    if (work.length === 0) {
+      if (this.syncState === 'failed') this.syncState = 'idle'
+      this.syncError = undefined
+      return true
+    }
 
     this.#syncing = true
     this.syncState = 'saving'
     let ok = false
-    try {
-      for (const { session, todo, deleted } of work) {
-        try {
-          const pull = await this.#backend.save(this.#ref(session), todo.map(({ object, text }) => ({ id: object.id, text, change: object.synced === undefined ? ('new' as const) : ('changed' as const) })), deleted)
-          for (const { object, text } of todo) {
-            object.synced = text
-            this.#dirtyObjects.add(object.id)
-          }
-          session.deleted = session.deleted.filter((entry) => !deleted.some((d) => d.id === entry.id))
-          if (pull) {
-            session.pull = pull.number
-            session.url = pull.url
-          }
-          this.#dirtySessions.add(session.id)
-        } catch (error) {
-          if (!(error instanceof Locked)) throw error
+    let failure: Error | undefined
+    let signedOut = false
+    for (const { session, todo, deleted } of work) {
+      const started = Date.now()
+      this.savingSessions.push(session.id)
+      this.savingObjects.push(...todo.map(({ object }) => object.id))
+      try {
+        const pull = await this.#backend.save(this.#ref(session), todo.map(({ object, text }) => ({ id: object.id, text, change: object.synced === undefined ? ('new' as const) : ('changed' as const) })), deleted)
+        for (const { object, text } of todo) {
+          object.synced = text
+          this.#dirtyObjects.add(object.id)
+        }
+        session.deleted = session.deleted.filter((entry) => !deleted.some((d) => d.id === entry.id))
+        if (pull) {
+          session.pull = pull.number
+          session.url = pull.url
+        }
+        this.#dirtySessions.add(session.id)
+        this.failedSessions = this.failedSessions.filter((id) => id !== session.id)
+      } catch (error) {
+        if (error instanceof SignedOut) {
+          signedOut = true
+          break
+        }
+        if (error instanceof Locked) {
           // Submitted from somewhere else (or before this browser knew): what was changed here is not taken any more.
           session.state = 'submitted'
           this.#dirtySessions.add(session.id)
           this.#say('status', `Die Sitzung „${session.name}“ war schon eingereicht. Spätere Änderungen daran werden nicht mehr gesichert.`)
+        } else {
+          failure ??= error as Error
+          if (!this.failedSessions.includes(session.id)) this.failedSessions.push(session.id)
         }
+      } finally {
+        // Even a quick save shows for a moment, so that it can be seen that something happened.
+        const ids = todo.map(({ object }) => object.id)
+        setTimeout(() => {
+          this.savingSessions.splice(this.savingSessions.indexOf(session.id), 1)
+          for (const id of ids) this.savingObjects.splice(this.savingObjects.indexOf(id), 1)
+        }, Math.max(0, MIN_SAVING - (Date.now() - started)))
       }
-      this.#schedule()
+    }
+    this.#schedule()
+    if (signedOut) {
+      this.syncState = 'idle'
+    } else if (failure) {
+      this.syncState = 'failed'
+      this.syncError = failure.message
+      this.#syncAfterTyping(SYNC_RETRY)
+    } else {
       this.syncState = 'idle'
       this.syncError = undefined
       ok = true
-    } catch (error) {
-      if (error instanceof SignedOut) {
-        this.syncState = 'idle'
-      } else {
-        this.syncState = 'failed'
-        this.syncError = (error as Error).message
-        this.#syncAfterTyping(SYNC_RETRY)
-      }
-    } finally {
-      this.#syncing = false
     }
+    this.#syncing = false
     if (this.#syncAgain) {
       this.#syncAgain = false
       this.#syncAfterApp()

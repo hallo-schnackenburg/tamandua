@@ -180,8 +180,11 @@
           class:current={!!object && object.id === ws.activeObject?.id}
           class:foreign={ws.foreign(file)}
           class:dragged={ws.dragging.includes(file.sha256)}
+          class:peek={!!file.objectId && ws.hover === file.objectId && ws.dragging.length === 0}
           class:failed={file.status === 'error' || file.status === 'conflict'}
           title={ws.foreign(file) ? `${file.name} (gehört zu einer anderen Sitzung)` : file.name}
+          onpointerenter={() => (ws.hover = file.objectId && file.objectId !== ws.activeObject?.id && !ws.foreign(file) ? file.objectId : undefined)}
+          onpointerleave={() => (ws.hover = undefined)}
           ondragstart={(event) => event.preventDefault()}
           onpointerdown={(event) => onpointerdown(event, file)}
           onclick={(event) => ws.select(file.sha256, { range: event.shiftKey, toggle: event.metaKey || event.ctrlKey })}
@@ -251,6 +254,7 @@
   /* One highlight color: blue is what is open or picked. Gray marks files that are used by an object, white ones are free. */
   .tile.assigned { background: #ececec; }
   .tile.current { border-color: #36c; }
+  .tile.peek { background: #c9d9f7; border-color: #8fadea; }
   .tile.selected { background: #dbe7fd; }
   .tile.dragged { opacity: 0.5; }
   .tile.foreign { opacity: 0.35; cursor: default; }

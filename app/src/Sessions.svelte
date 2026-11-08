@@ -44,6 +44,14 @@
 
 <svelte:window onclick={outside} onkeydown={(e) => e.key === 'Escape' && (listed = false)} />
 
+{#snippet mark(session: Session)}
+  {#if ws.savingSessions.includes(session.id)}
+    <span class="spinner" title="Wird gesichert" aria-label="Wird gesichert"></span>
+  {:else if ws.failedSessions.includes(session.id)}
+    <span class="failed" title="Das Sichern hat nicht geklappt" aria-label="Das Sichern hat nicht geklappt">!</span>
+  {/if}
+{/snippet}
+
 <div class="sessions">
   {#if mode !== 'view'}
     <input
@@ -62,6 +70,7 @@
   {:else}
     <button class="choice" aria-haspopup="listbox" aria-expanded={listed} onclick={() => (listed = !listed)}>
       <span class="label" class:none={!ws.current}>{ws.current?.name ?? 'Keine Sitzung'}</span>
+      {#if ws.current}{@render mark(ws.current)}{/if}
       <span class="caret" aria-hidden="true">▾</span>
     </button>
     {#if ws.current}
@@ -83,6 +92,7 @@
               }}
             >
               <span class="label">{session.name}</span>
+              {@render mark(session)}
               {#if BADGES[session.state]}<span class="badge {session.state}">{BADGES[session.state]}</span>{/if}
               <span class="count">{countOf(session)}</span>
             </button>
@@ -112,6 +122,9 @@
   .item .label { flex: 1; min-width: 0; }
   .item.new { color: #36c; margin-top: 4px; border-top: 1px solid #eee; border-radius: 0 0 4px 4px; }
   .count { font-size: 0.78rem; color: #888; }
+  .spinner { flex: none; width: 10px; height: 10px; border: 1.5px solid #b9c8ee; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  .failed { flex: none; width: 14px; height: 14px; display: grid; place-items: center; border-radius: 50%; background: #c92a2a; color: #fff; font-size: 0.72rem; font-weight: 700; line-height: 1; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .badge { font-size: 0.72rem; color: #36c; border: 1px solid #b9c8ee; border-radius: 10px; padding: 0 7px; white-space: nowrap; }
   .badge.merged { color: #2a7a3b; border-color: #b5dcbd; }
 </style>

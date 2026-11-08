@@ -1,5 +1,4 @@
 <script lang="ts">
-  import * as db from './db.js'
   import { onMount } from 'svelte'
   import Chat from './Chat.svelte'
   import Files from './Files.svelte'
@@ -46,10 +45,7 @@
     if (import.meta.env.DEV) {
       ;(window as unknown as { workspace: Workspace }).workspace = ws // for the console and the browser tests
       // Development helper for the console: `resetArchive()` clears everything stored in the browser and reloads.
-      ;(window as unknown as { resetArchive: () => Promise<void> }).resetArchive = async () => {
-        await db.reset()
-        location.reload()
-      }
+      ;(window as unknown as { resetArchive: () => Promise<void> }).resetArchive = () => ws.resetAll()
     }
     void ws.load()
     void ws.refreshSession(loginNotice())
@@ -99,13 +95,7 @@
       <Sessions workspace={ws} />
       <span class="sync" class:failed={ws.syncState === 'failed'} role="status">
         {#if ws.syncState === 'failed'}
-          Noch nicht in GitHub gesichert{ws.syncError ? `: ${ws.syncError}` : ''}
-        {:else if ws.syncState === 'saving'}
-          Wird gesichert …
-        {:else if ws.unsaved.length > 0}
-          Änderungen werden gleich gesichert
-        {:else if ws.shown.length > 0 && ws.current?.state === 'open'}
-          Alles gesichert
+          Noch nicht in GitHub gesichert{ws.syncError ? `: ${ws.syncError}` : ''}. Neuer Versuch in einer Minute.
         {/if}
       </span>
       {#if ws.saveState === 'failed'}
