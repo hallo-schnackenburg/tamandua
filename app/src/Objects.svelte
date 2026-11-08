@@ -2,7 +2,7 @@
   import { locate, readField, readValue, validateObjectYaml } from '@tamandua/core'
   import type { Diagnostic } from '@codemirror/lint'
   import Editor from './Editor.svelte'
-  import { colorOf, objectLabel } from './labels.js'
+  import { objectLabel } from './labels.js'
   import type { ObjectRecord, Workspace } from './workspace.svelte.js'
 
   const STANDING = {
@@ -70,7 +70,6 @@
         ws.addDropped(event.dataTransfer.files, object.id)
       }}
       id={`object-${object.id}`}
-      style:--color={colorOf(object.number)}
       role="group"
       aria-label={`Objekt ${object.number}`}
     >
@@ -113,8 +112,9 @@
 
 <style>
   .list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-  .row { flex: none; overflow: hidden; border: 2px solid var(--color, #ddd); border-radius: 6px; background: #fff; }
+  .row { flex: none; overflow: hidden; border: 2px solid #ddd; border-radius: 6px; background: #fff; }
   .row.open { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 16rem; }
+  .row.open, .row.over { border-color: #36c; }
   .row.over { background: #eef3ff; }
   .head { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
   .main { display: flex; flex-direction: column; min-width: 0; flex: 1; }

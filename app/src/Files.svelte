@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { colorOf } from './labels.js'
   import type { FileRecord, Workspace } from './workspace.svelte.js'
 
   let { workspace: ws }: { workspace: Workspace } = $props()
@@ -46,11 +45,7 @@
     count: number
   }
   let ghost = $state<Ghost>()
-
-  const colorOfFile = (file: FileRecord): string | undefined => {
-    const object = file.objectId ? objectsById.get(file.objectId) : undefined
-    return object ? colorOf(object.number) : undefined
-  }
+  const BLUE = '#36c'
 
   function onpointerdown(event: PointerEvent, file: FileRecord) {
     if (event.button !== 0 || ws.foreign(file)) return
@@ -81,14 +76,13 @@
       target = row?.dataset.objectId
       away = !overlaps && !target
       ws.dragTarget = target
-      const targetObject = target ? objectsById.get(target) : undefined
       ghost = {
         x,
         y,
         width: size.width,
         file,
         count: shas.length,
-        color: targetObject ? colorOf(targetObject.number) : overlaps ? colorOfFile(file) : undefined,
+        color: target ? BLUE : undefined,
       }
     }
 
@@ -177,17 +171,16 @@
     <div class="grid">
       {#each ws.visibleFiles as file (file.sha256)}
         {@const object = file.objectId ? objectsById.get(file.objectId) : undefined}
-        {@const color = object ? colorOf(object.number) : undefined}
         <div
           class="tile"
           role="button"
           tabindex="0"
           class:selected={selected.has(file.sha256)}
           class:assigned={!!object}
+          class:current={!!object && object.id === ws.activeObject?.id}
           class:foreign={ws.foreign(file)}
           class:dragged={ws.dragging.includes(file.sha256)}
           class:failed={file.status === 'error' || file.status === 'conflict'}
-          style:--color={color}
           title={ws.foreign(file) ? `${file.name} (gehört zu einer anderen Sitzung)` : file.name}
           ondragstart={(event) => event.preventDefault()}
           onpointerdown={(event) => onpointerdown(event, file)}
@@ -233,7 +226,7 @@
   {/if}
   {#if over}<div class="overlay">Zum Hinzufügen loslassen</div>{/if}
   {#if ghost}
-    <div class="tile ghost" style:left="{ghost.x}px" style:top="{ghost.y}px" style:width="{ghost.width}px" style:border-color={ghost.color ?? '#ddd'}>
+    <div class="tile ghost" style:left="{ghost.x}px" style:top="{ghost.y}px" style:width="{ghost.width}px" style:border-color={ghost.color ?? '#ccc'}>
       {#if ghost.file.preview}
         <img src={urlOf(ghost.file.preview)} alt="" draggable="false" />
       {:else}
@@ -254,8 +247,10 @@
   .overlay { position: absolute; z-index: 2; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 0.5rem 1rem; border-radius: 999px; background: rgba(255, 255, 255, 0.92); color: #36c; font-weight: 600; pointer-events: none; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; overflow: auto; align-content: start; padding: 4px; }
-  .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 4px; text-align: left; font: inherit; font-size: 0.78rem; background: #fafafa; border: 2px solid #e6e6e6; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
-  .tile.assigned { border-color: var(--color); }
+  .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 4px; text-align: left; font: inherit; font-size: 0.78rem; background: #fff; border: 2px solid #e6e6e6; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
+  /* One highlight color: blue is what is open or picked. Gray marks files that are used by an object, white ones are free. */
+  .tile.assigned { background: #ececec; }
+  .tile.current { border-color: #36c; }
   .tile.selected { background: #dbe7fd; }
   .tile.dragged { opacity: 0.5; }
   .tile.foreign { opacity: 0.35; cursor: default; }

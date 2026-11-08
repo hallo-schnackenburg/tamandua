@@ -32,9 +32,3 @@ export const FIELD_NAMES: Record<string, string> = {
 /** "Brief" for a letter, "Bild" for an image without subtype. */
 export const objectLabel = (type?: string, subtype?: string): string =>
   (subtype && SUBTYPE_NAMES[subtype]) || (type && TYPE_NAMES[type]) || subtype || type || 'Objekt'
-
-// One color per object.
-// Soft, desaturated colors in the spirit of the chat bubbles.
-const PALETTE = ['#7ea6e0', '#e0957a', '#86b894', '#b58ac4', '#d98aa6', '#7fb5bf', '#d9b06a', '#9a8ad1']
-
-export const colorOf = (number: number): string => PALETTE[(number - 1) % PALETTE.length]
