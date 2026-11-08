@@ -52,6 +52,7 @@
   {#each ws.shown as object (object.id)}
     {@const info = summary(object)}
     {@const open = active?.id === object.id}
+    {@const standing = ws.standing(object)}
     <div
       class="row"
       class:open
@@ -82,14 +83,19 @@
         <span class="main">
           <span class="title" class:empty={!info.title}>{info.title || `Objekt ${object.number}`}</span>
           <span class="sub">
-            {info.kind}{info.date ? ` · ${info.date}` : ''} · {info.files}
+            {info.date ? `${info.date} · ` : ''}{info.files}
             {info.files === 1 ? 'Datei' : 'Dateien'}
           </span>
         </span>
         {#if info.problems > 0}<span class="problems">{info.problems} offen</span>{/if}
-        <span class="standing {ws.standing(object)}" title={STANDING[ws.standing(object)].hint}>
-          {#if ws.standing(object) === 'saving'}<span class="spinner" aria-hidden="true"></span>{/if}{STANDING[ws.standing(object)].label}
-        </span>
+        <!-- The type is what the row says; the standing only takes its place while there is something to report. -->
+        {#if standing === 'local' || standing === 'changed' || standing === 'saving' || standing === 'failed'}
+          <span class="standing {standing}" title={STANDING[standing].hint}>
+            {#if standing === 'saving'}<span class="spinner" aria-hidden="true"></span>{/if}{STANDING[standing].label}
+          </span>
+        {:else if info.kind}
+          <span class="kind">{info.kind}</span>
+        {/if}
       </button>
       {#if open}
         <div class="body">
@@ -124,11 +130,12 @@
   .row.open, .row.over { border-color: #36c; }
   .row.over { background: #eef3ff; }
   .row.peek { background: #d9e5fa; border-color: #8fadea; }
-  .head { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
+  .head { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 12px; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
   .main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title.empty { font-weight: 400; color: #999; }
   .sub { font-size: 0.78rem; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kind { font-size: 0.72rem; color: #666; background: #f0f0ee; white-space: nowrap; border-radius: 10px; padding: 1px 9px; }
   .standing { font-size: 0.72rem; color: #888; white-space: nowrap; border: 1px solid #ddd; border-radius: 10px; padding: 0 7px; }
   .standing.saved, .standing.submitted { color: #36c; border-color: #b9c8ee; }
   .standing.merged { color: #2a7a3b; border-color: #b5dcbd; }

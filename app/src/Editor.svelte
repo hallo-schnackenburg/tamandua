@@ -109,7 +109,7 @@
   })
 </script>
 
-<div class="editor" bind:this={host}></div>
+<div class="editor" class:frozen={readonly} bind:this={host}></div>
 
 <style>
   /* The editor is as tall as its text, but at most as tall as the room the open row has; longer text scrolls inside. */
@@ -120,5 +120,7 @@
   .editor :global(.cm-line) { padding-left: 10px; }
   .editor :global(.cm-editor.cm-focused) { outline: none; }
   .editor :global(.cm-scroller) { overflow: auto; }
+  /* A frozen text has no cursor line to point out. */
+  .editor.frozen :global(.cm-activeLine) { background: transparent; }
   .editor :global(.cm-files), .editor :global(.cm-files span) { color: #b3b3b3 !important; }
 </style>

@@ -225,6 +225,13 @@
           {/if}
         </div>
       {/each}
+
+      <!-- The place to put more files, always after the last tile. The whole pane takes files too. -->
+      <label class="drop">
+        <span>Dateien hier ablegen</span>
+        <small>oder klicken zum Auswählen</small>
+        <input type="file" multiple onchange={onpick} />
+      </label>
     </div>
   {/if}
   {#if over}<div class="overlay">Zum Hinzufügen loslassen</div>{/if}
@@ -249,6 +256,10 @@
   :global(main .pane.drop::after) { content: ''; position: absolute; inset: 0; border-radius: 6px; background: rgba(157, 188, 247, 0.5); pointer-events: none; }
   .overlay { position: absolute; z-index: 2; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 0.5rem 1rem; border-radius: 999px; background: rgba(255, 255, 255, 0.92); color: #36c; font-weight: 600; pointer-events: none; }
 
+  .drop { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 10px; border: 1.5px dashed #d6d6d6; border-radius: 8px; color: #888; font-size: 0.85rem; cursor: pointer; text-align: center; }
+  .drop span { font-weight: 600; color: #666; }
+  .drop small { font-size: 0.75rem; color: #aaa; }
+  .drop:hover { border-color: #8fadea; background: #f6f9ff; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; overflow: auto; align-content: start; padding: 4px; }
   .tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 5px; text-align: left; font: inherit; font-size: 0.78rem; background: #fff; border: 1px solid #e6e6e6; border-radius: 6px; cursor: pointer; user-select: none; min-width: 0; }
   /* One highlight color: blue is what is open or picked. Gray marks files that are used by an object, white ones are free. */

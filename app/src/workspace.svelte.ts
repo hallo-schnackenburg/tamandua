@@ -430,9 +430,15 @@ export class Workspace {
   }
 
   /** Takes a accepted session with its objects and files out of this view. They stay in the repository and the bucket. */
+  /** Merged sessions can be taken out of the view; an open one only while nothing belongs to it and nothing was saved for it. */
+  removable(session: Session): boolean {
+    if (session.state === 'merged') return true
+    return session.state === 'open' && session.deleted.length === 0 && !session.pull && !this.objects.some((o) => o.sessionId === session.id)
+  }
+
   removeSession(id: string) {
     const session = this.sessions.find((s) => s.id === id)
-    if (!session || session.state !== 'merged') return
+    if (!session || !this.removable(session)) return
     const gone = this.objects.filter((o) => o.sessionId === id)
     const ids = new Set(gone.map((o) => o.id))
     const shas = new Set(this.files.filter((f) => f.objectId && ids.has(f.objectId)).map((f) => f.sha256))

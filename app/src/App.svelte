@@ -33,13 +33,6 @@
   }
 
   let confirming = $state(false)
-  let cleaning = $state(false)
-
-  function pick(event: Event) {
-    const input = event.currentTarget as HTMLInputElement
-    ws.addDropped(input.files ?? [])
-    input.value = '' // so that the same file can be picked again
-  }
 
   onMount(() => {
     if (import.meta.env.DEV) {
@@ -91,8 +84,22 @@
   {#if ws.login.state === 'user'}
     {@const user = ws.login.user}
     <header>
-      <strong class="brand">Tamandua</strong>
       <Sessions workspace={ws} />
+      {#if ws.current?.state === 'submitted'}
+        <span class="state submitted">Eingereicht</span>
+      {:else if ws.current?.state === 'merged'}
+        <span class="state merged">Übernommen</span>
+      {:else if confirming}
+        <span class="confirm">
+          Sitzung einreichen?
+          <button class="submit" onclick={() => { confirming = false; void ws.submit() }}>Ja, einreichen</button>
+          <button class="plain" onclick={() => (confirming = false)}>Abbrechen</button>
+        </span>
+      {:else}
+        <button class="submit" disabled={ws.current?.state !== 'open' || ws.shown.length === 0 || ws.submitting} onclick={() => (confirming = true)}>
+          {ws.submitting ? 'Wird eingereicht …' : 'Einreichen'}
+        </button>
+      {/if}
       <span class="sync" class:failed={ws.syncState === 'failed'} role="status">
         {#if ws.syncState === 'failed'}
           Noch nicht in GitHub gesichert{ws.syncError ? `: ${ws.syncError}` : ''}. Neuer Versuch in einer Minute.
@@ -102,17 +109,6 @@
         <span class="sync failed">Nicht gespeichert: Änderungen gehen verloren, wenn du die Seite schließt.</span>
       {/if}
       <span class="spacer"></span>
-      {#if confirming}
-        <span class="confirm">
-          Sitzung einreichen?
-          <button class="primary" onclick={() => { confirming = false; void ws.submit() }}>Ja, einreichen</button>
-          <button onclick={() => (confirming = false)}>Abbrechen</button>
-        </span>
-      {:else}
-        <button class="primary" disabled={ws.current?.state !== 'open' || ws.shown.length === 0 || ws.submitting} onclick={() => (confirming = true)}>
-          {ws.submitting ? 'Wird eingereicht …' : 'Einreichen'}
-        </button>
-      {/if}
       <span class="user">
         {#if user.avatar}<img src={user.avatar} alt="" width="24" height="24" />{/if}
         {user.name || user.login}
@@ -127,13 +123,7 @@
       </section>
 
       <section class="pane">
-        <h2>
-          Dateien
-          <label class="add" title="Dateien hinzufügen" aria-label="Dateien hinzufügen">
-            +
-            <input type="file" multiple onchange={pick} />
-          </label>
-        </h2>
+        <h2>Dateien</h2>
         <Files workspace={ws} />
       </section>
 
@@ -150,13 +140,6 @@
             {:else}
               Diese Sitzung ist ins Archiv übernommen.
               {#if session.url}<a href={session.url} target="_blank" rel="noreferrer">Auf GitHub ansehen</a>{/if}
-              {#if cleaning}
-                Aus der Ansicht entfernen?
-                <button class="link" onclick={() => { cleaning = false; ws.removeSession(session.id) }}>Ja, entfernen</button>
-                <button class="link" onclick={() => (cleaning = false)}>Abbrechen</button>
-              {:else}
-                <button class="link" title="Nimmt die Sitzung aus dieser Ansicht. Im Archiv bleibt sie." onclick={() => (cleaning = true)}>Aus der Ansicht entfernen</button>
-              {/if}
             {/if}
           </p>
         {/if}
@@ -183,11 +166,21 @@
 
 <style>
   main { display: flex; flex-direction: column; gap: 12px; height: 100%; padding: 12px; }
-  header { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; min-height: 28px; }
-  .brand { font-size: 1rem; }
+  /* A raised white bar: the session is the center of it, its state or the way forward stands right next to it. */
+  header { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; padding: 8px 14px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 14px rgb(0 0 0 / 0.05); }
   .spacer { flex: 1; }
   .sync { color: #777; }
   .sync.failed { color: #a11; }
+  /* The state is a quiet label (gray, with a dot); the way forward is a solid blue button. They must not be mistaken for each other. */
+  .state { display: inline-flex; align-items: center; gap: 6px; height: 1.4rem; box-sizing: border-box; padding: 0 10px; border-radius: 999px; background: #f0f0ee; color: #666; font-size: 0.72rem; }
+  .state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #999; }
+  .state.submitted { background: #fdebd7; color: #a85408; }
+  .state.submitted::before { background: #e07b1a; }
+  .state.merged { background: #e9f5ec; color: #2a7a3b; }
+  .state.merged::before { background: #3aa655; }
+  button.submit { height: 2.3rem; padding: 0 18px; border-radius: 999px; border: 0; background: #36c; color: #fff; font-weight: 600; box-shadow: 0 1px 2px rgb(51 102 204 / 0.35); }
+  button.submit:hover:not(:disabled) { background: #2a58b8; }
+  button.plain { border-radius: 999px; }
   .user { display: inline-flex; align-items: center; gap: 6px; }
   .user img { border-radius: 50%; }
   .confirm { display: inline-flex; align-items: center; gap: 8px; }
@@ -201,6 +194,7 @@
   .button { display: inline-block; padding: 8px 16px; border-radius: 6px; text-decoration: none; }
   .notice { color: #a11; }
   .banner { margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; font-size: 0.85rem; background: #eef2fb; color: #345; }
+  .banner.submitted { background: #fdebd7; color: #7a4308; }
   .banner.merged { background: #edf7ef; }
   .banner a { color: #36c; margin: 0 4px; }
   .quiet { color: #888; font-size: 0.9rem; }
@@ -210,7 +204,4 @@
   :global(.empty-state small) { font-size: 0.78rem; color: #c4c4c4; }
   .pane { position: relative; display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: 6px; padding: 12px; }
   h2 { display: flex; align-items: center; height: 1.6rem; margin: 0 0 8px; font-size: 1rem; }
-  .add { margin-left: auto; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 50%; color: #36c; font-size: 1.3rem; font-weight: 400; line-height: 1; cursor: pointer; }
-  .add:hover { background: #eef2fb; }
-  .add input { display: none; }
 </style>
