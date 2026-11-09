@@ -5,7 +5,7 @@ Alles in der GitHub-Organisation bzw. dem Konto, dem das Daten-Repo gehört.
 
 ## 1. Daten-Repo
 
-1. Repo anlegen (`archive-dev` für local, `archive-staging`, `archive-production`), öffentlich
+1. Repo anlegen (`archive-dev` für local, `archive-staging`, `archive` für production), öffentlich
    und **leer**: ohne README, ohne `.gitignore`, ohne Lizenz.
 2. Die Vorlage `templates/archive/` als ersten Commit auf `main` hochladen. Sie enthält
    `.github/workflows/validate.yml`, das das Tool-Repo `hallo-schnackenburg/tamandua` holt;
@@ -51,7 +51,9 @@ Settings > Developer settings > GitHub Apps > New GitHub App.
 
 Danach auf der App-Seite "Generate a new client secret" und die Client ID
 notieren. Dann "Install App", die Organisation wählen und nur das Daten-Repo auswählen. Ohne Installation
-sieht die App das Repo nicht, und der Login endet mit "Not Found" (`?login=failed`).
+klappt der Login bei einem öffentlichen Repo noch (er liest nur), aber das Sichern scheitert mit
+403 "Resource not accessible by integration". Bei einem privaten Repo endet schon der Login
+mit "Not Found" (`?login=failed`).
 
 ## 3. Worker
 

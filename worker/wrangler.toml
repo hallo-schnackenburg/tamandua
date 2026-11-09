@@ -47,7 +47,7 @@ GEOCODE_COUNTRIES = "de"
 GEOCODE_USER_AGENT = "tamandua"
 
 GITHUB_CLIENT_ID = "Iv23liWYRPKzPydARzCg"
-DATA_REPO = "hallo-schnackenburg/archive-production"
+DATA_REPO = "hallo-schnackenburg/archive"
 BASE_BRANCH = "main"
 APP_URL = "https://tamandua.schnackenburg.de"
 
