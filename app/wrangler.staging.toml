@@ -1,0 +1,11 @@
+# The Pages project for staging: the built app (dist/) plus the Function in functions/api/.
+# Deployed with `npm run deploy:staging --workspace app`.
+name = "tamandua-staging"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-09-01"
+
+# The Function calls the staging Worker through this binding (see functions/api/[[path]].ts).
+# The Worker has to be deployed first.
+[[services]]
+binding = "WORKER"
+service = "tamandua-worker-staging"

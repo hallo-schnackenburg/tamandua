@@ -1,27 +1,14 @@
-// One-off check of what the bucket supports. Run from worker/:
-//   node --experimental-strip-types scripts/probe-s3.mjs
-// Reads the S3_* values from .dev.vars and prints only statuses, never the keys. It writes and
-// deletes one small object under probe/.
+// Checks what an environment's bucket supports. Run from worker/:
+//   node --experimental-strip-types scripts/probe-s3.mjs [local|staging|production]
+// Reads the settings like provision-bucket.mjs (see environment.mjs) and prints only statuses, never
+// the keys. It writes and deletes one small object under probe/.
 
-import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { presign } from '../src/s3.ts'
+import { loadEnvironment } from './environment.mjs'
 
-const vars = Object.fromEntries(
-  readFileSync(new URL('../.dev.vars', import.meta.url), 'utf8')
-    .split('\n')
-    .filter((line) => /^[A-Z0-9_]+=/.test(line))
-    .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1).trim()]),
-)
-const config = {
-  endpoint: vars.S3_ENDPOINT,
-  bucket: vars.S3_BUCKET,
-  accessKeyId: vars.S3_ACCESS_KEY_ID,
-  secretAccessKey: vars.S3_SECRET_ACCESS_KEY,
-}
-for (const [name, value] of Object.entries(config)) if (!value) throw new Error(`${name} is empty in .dev.vars`)
+const { config, origin } = loadEnvironment(process.argv[2] ?? 'local')
 
-const origin = 'http://localhost:5173'
 const key = 'probe/hello.txt'
 const body = 'Stadtarchiv probe\n'
 const sha = createHash('sha256').update(body).digest('base64')

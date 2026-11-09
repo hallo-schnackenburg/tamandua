@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --env-file .secrets/dev",
     "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -12,6 +13,7 @@
     "@tamandua/core": "*"
   },
   "devDependencies": {
+    "smol-toml": "^1.3.0",
     "typescript": "^5.9.0",
     "vitest": "^5.1.0",
     "wrangler": "^4.158.0"

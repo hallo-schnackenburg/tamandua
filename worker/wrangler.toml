@@ -3,24 +3,53 @@ main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
 [vars]
-# Which page may call the Worker from a browser. Local development only.
 ALLOWED_ORIGIN = "http://localhost:5173"
 MODEL = "claude-haiku-5-5"
 
-# Coordinate lookup (OpenStreetMap Nominatim): countries to search in (empty: everywhere) and the
-# User-Agent it needs; name the application and how to reach you, e.g. "tamandua (you@example.org)".
 GEOCODE_COUNTRIES = "de"
 GEOCODE_USER_AGENT = "tamandua"
 
-# GitHub sign-in (a GitHub App per environment) and the data repository the objects are saved to.
-# GITHUB_CLIENT_ID is public. APP_URL is the address of the app (the Worker is reached below it, under /api).
 GITHUB_CLIENT_ID = "Iv23lio7AFNsecVWdaph"
 DATA_REPO = "hallo-schnackenburg/archive-dev"
 BASE_BRANCH = "main"
 APP_URL = "http://localhost:5173"
 
-# Secrets are not written here:
-#   local:       worker/.dev.vars          (ANTHROPIC_API_KEY, S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID,
-#                                           S3_SECRET_ACCESS_KEY, GITHUB_CLIENT_SECRET, SESSION_SECRET;
-#                                           not in git, see .dev.vars.example)
-#   deployed:    npx wrangler secret put ANTHROPIC_API_KEY   (and likewise for the others)
+
+
+[env.staging]
+workers_dev = false
+
+[env.staging.vars]
+ALLOWED_ORIGIN = "https://tamandua-staging.schnackenburg.de"
+MODEL = "claude-haiku-5-5"
+
+GEOCODE_COUNTRIES = "de"
+GEOCODE_USER_AGENT = "tamandua"
+
+GITHUB_CLIENT_ID = "Iv23lib3wO6Gt7ulIeHo"
+DATA_REPO = "hallo-schnackenburg/archive-staging"
+BASE_BRANCH = "main"
+APP_URL = "https://tamandua-staging.schnackenburg.de"
+
+S3_ENDPOINT = "https://nbg1.your-objectstorage.com"
+S3_BUCKET = "schnackenburg-archiv-staging"
+
+
+
+[env.production]
+workers_dev = false
+
+[env.production.vars]
+ALLOWED_ORIGIN = "https://tamandua.schnackenburg.de"
+MODEL = "claude-haiku-5-5"
+
+GEOCODE_COUNTRIES = "de"
+GEOCODE_USER_AGENT = "tamandua"
+
+GITHUB_CLIENT_ID = "Iv23liWYRPKzPydARzCg"
+DATA_REPO = "hallo-schnackenburg/archive-production"
+BASE_BRANCH = "main"
+APP_URL = "https://tamandua.schnackenburg.de"
+
+S3_ENDPOINT = "https://nbg1.your-objectstorage.com"
+S3_BUCKET = "schnackenburg-archiv-production"

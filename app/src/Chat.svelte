@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
+  import { readField } from '@tamandua/core'
   import type { Workspace } from './workspace.svelte.js'
 
   let { workspace: ws }: { workspace: Workspace } = $props()
@@ -62,6 +63,16 @@
   // What the next message is about: the selected files.
   const subject = $derived(ws.target.length === 0 ? '' : ws.target.length === 1 ? `Datei: ${ws.target[0].name}` : `${ws.target.length} Dateien`)
 
+  // The objects of those files, if they have any: a message to a file that has none creates an object, so there is nothing to show then.
+  const objectSubject = $derived.by(() => {
+    const ids = new Set(ws.target.map((f) => f.objectId).filter((id): id is string => !!id))
+    const objects = ws.objects.filter((o) => ids.has(o.id))
+    if (objects.length === 0) return ''
+    if (objects.length > 1) return `${objects.length} Objekte`
+    const title = readField(objects[0].text, 'title')
+    return `Objekt ${objects[0].number}${typeof title === 'string' && title ? `: ${title}` : ''}`
+  })
+
   function submit() {
     if (ws.busy || !text.trim()) return
     const message = text
@@ -93,7 +104,12 @@
   </div>
 
   <div class="composer">
-    {#if subject}<div class="subject">{subject}</div>{/if}
+    {#if subject}
+      <div class="subjects">
+        <span class="subject">{subject}</span>
+        {#if objectSubject}<span class="subject object">{objectSubject}</span>{/if}
+      </div>
+    {/if}
     <textarea
       bind:this={input}
       bind:value={text}
@@ -120,7 +136,9 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px; border: 1px solid #e2e0dc; border-radius: var(--r-l); background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06); }
   .composer:focus-within { border-color: #c9c6c0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.09); }
-  .subject { font-size: 0.8rem; color: #6b5a1e; padding: 2px 8px; background: #f7f0d2; border-radius: 999px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subjects { display: flex; flex-wrap: wrap; gap: 6px; align-self: flex-start; max-width: 100%; }
+  .subject { font-size: 0.8rem; color: #6b5a1e; padding: 2px 8px; background: #f7f0d2; border-radius: 999px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subject.object { color: #2c4a8a; background: #e3ebfa; }
   textarea { resize: none; font: inherit; line-height: 1.4; min-height: 1.4em; padding: 2px 40px 2px 2px; border: 0; outline: none; background: transparent; }
   textarea::placeholder { color: #aaa; }
   .send { position: absolute; right: 8px; bottom: 8px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: #1f1f1f; color: #fff; cursor: pointer; }

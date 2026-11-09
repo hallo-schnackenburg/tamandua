@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "deploy:staging": "vite build --mode staging && cp wrangler.staging.toml wrangler.toml && wrangler pages deploy dist --project-name tamandua-staging; rm -f wrangler.toml",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {

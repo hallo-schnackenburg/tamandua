@@ -79,7 +79,7 @@ async function signedRoute(
   if (repo) return repo
   if (request.method === 'POST' && route === '/upload') return upload(request, env, fetchFn)
   if (request.method !== 'POST' || route !== '/chat') return json({ error: 'Not found.' }, 404, env)
-  if (!env.ANTHROPIC_API_KEY) return json({ error: 'The server has no Anthropic key (worker/.dev.vars).' }, 500, env)
+  if (!env.ANTHROPIC_API_KEY) return json({ error: 'The server has no Anthropic key (worker/.secrets/dev).' }, 500, env)
 
   let chat
   try {
@@ -124,7 +124,7 @@ async function signedRoute(
 
 async function upload(request: Request, env: Env, fetchFn: typeof fetch): Promise<Response> {
   const config = s3Config(env)
-  if (!config) return json({ error: 'The server has no storage settings (S3_* in worker/.dev.vars).' }, 500, env)
+  if (!config) return json({ error: 'The server has no storage settings (S3_* in worker/.secrets/dev).' }, 500, env)
 
   let items
   try {

@@ -1,11 +1,11 @@
 # GitHub einrichten
 
-Pro Environment (lokal, dev, production) eine GitHub App und ein Daten-Repo.
+Pro Environment (local, staging, production) eine GitHub App und ein Daten-Repo.
 Alles in der GitHub-Organisation bzw. dem Konto, dem das Daten-Repo gehört.
 
 ## 1. Daten-Repo
 
-1. Repo anlegen (`archive-dev`, später `archive`), öffentlich.
+1. Repo anlegen (`archive-dev` für local, `archive-staging`, `archive`), öffentlich.
 2. Den Inhalt von `templates/archive/` aus diesem Repo
    (`.github/workflows/validate.yml`) hineinkopieren. Die Vorlage holt das Tool-Repo
    `hallo-schnackenburg/tamandua`; es muss öffentlich sein.
@@ -17,10 +17,11 @@ Alles in der GitHub-Organisation bzw. dem Konto, dem das Daten-Repo gehört.
 
 Settings > Developer settings > GitHub Apps > New GitHub App.
 
-- Name: `Tamandua (dev)` bzw. `Tamandua`
+- Name: `Schnackenburg Archiv Tamandua (dev)`, `… (staging)` bzw. `Schnackenburg Archiv Tamandua`
 - Homepage URL: die Adresse der App
-- Callback URL: `http://localhost:5173/api/auth/callback` (lokal) bzw.
-  `https://tamandua-dev.schnackenburg.de/api/auth/callback`
+- Callback URL: `http://localhost:5173/api/auth/callback` (local),
+  `https://tamandua-staging.schnackenburg.de/api/auth/callback` (staging) bzw.
+  `https://tamandua.schnackenburg.de/api/auth/callback` (production)
 - "Expire user authorization tokens": an
 - "Request user authorization (OAuth) during installation": aus
 - Webhook: "Active" aus
@@ -36,7 +37,7 @@ notieren. Dann "Install App" und nur das Daten-Repo auswählen.
 
 `worker/wrangler.toml`: `GITHUB_CLIENT_ID`, `DATA_REPO` (`owner/repo`), `BASE_BRANCH` (`main`), `APP_URL`.
 
-Geheimnisse, lokal in `worker/.dev.vars`, deployed mit `npx wrangler secret put`:
+Geheimnisse, lokal in `worker/.secrets/dev`, deployed mit `npx wrangler secret put`:
 
 - `GITHUB_CLIENT_SECRET`: das Client Secret der App
 - `SESSION_SECRET`: ein langer Zufallswert, z. B. `openssl rand -base64 32`
