@@ -98,7 +98,7 @@
         <span class="state merged">Übernommen</span>
       {:else if confirming}
         <span class="confirm">
-          Sitzung einreichen?
+          Erfassung einreichen?
           <button class="submit" onclick={() => { confirming = false; void ws.submit() }}>Ja, einreichen</button>
           <button class="plain" onclick={() => (confirming = false)}>Abbrechen</button>
         </span>
@@ -154,10 +154,10 @@
           {@const session = ws.current}
           <p class="banner {session.state}" role="status">
             {#if session.state === 'submitted'}
-              Diese Sitzung ist eingereicht. Sie kann hier nicht mehr geändert werden.
+              Diese Erfassung ist eingereicht. Sie kann hier nicht mehr geändert werden.
               {#if session.url}<a href={session.url} target="_blank" rel="noreferrer">Auf GitHub ansehen</a>{/if}
             {:else}
-              Diese Sitzung ist ins Archiv übernommen.
+              Diese Erfassung ist ins Archiv übernommen.
               {#if session.url}<a href={session.url} target="_blank" rel="noreferrer">Auf GitHub ansehen</a>{/if}
             {/if}
           </p>

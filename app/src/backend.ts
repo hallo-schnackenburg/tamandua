@@ -42,7 +42,7 @@ export interface Removed {
 /** The pull request of the session is no longer a draft: it was submitted, nothing may be added to it. */
 export class Locked extends Error {
   constructor() {
-    super('Diese Sitzung ist schon eingereicht.')
+    super('Diese Erfassung ist schon eingereicht.')
   }
 }
 

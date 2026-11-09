@@ -144,7 +144,7 @@
   {#if ws.shown.length === 0}
     <p class="empty-state">
       <span>Keine Objekte</span>
-      <small>{ws.current && ws.current.state !== 'open' ? 'Diese Sitzung ist leer.' : 'Lege Dateien ab und beschreibe sie.'}</small>
+      <small>{ws.current && ws.current.state !== 'open' ? 'Diese Erfassung ist leer.' : 'Lege Dateien ab und beschreibe sie.'}</small>
     </p>
   {/if}
 </div>

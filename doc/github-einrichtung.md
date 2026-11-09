@@ -73,22 +73,26 @@ und Pull Requests annehmen.
 
 ## 5. Ablauf der Erfassung
 
-Die Arbeit ist in **Sitzungen** gegliedert, benannten Arbeitseinheiten wie "Dachbodenfund Postkarten". Eine Sitzung
+Die Arbeit ist in **Erfassungen** gegliedert, benannten Arbeitseinheiten wie "Dachbodenfund Postkarten". Eine Erfassung
 ist ein Branch und ein Pull Request.
 
-- Das erste gesicherte Objekt einer Sitzung legt den Branch `erfassung/<login>/<kurzname>` und einen Entwurf
-  (Draft-Pull-Request) an. Der Titel ist `<Sitzungsname> (<Person>, TT.MM.JJJJ, HH:MM)`; der Sitzungsname steht
-  zusätzlich als Marker im Text des Pull Requests, damit die App die Sitzung wiederfindet. Jede weitere Sicherung
+- Das erste gesicherte Objekt einer Erfassung legt den Branch `erfassung/<login>/<kurzname>` und einen Entwurf
+  (Draft-Pull-Request) an. Der Titel ist `<Erfassungsname> (<Person>, TT.MM.JJJJ, HH:MM)`; der Erfassungsname steht
+  zusätzlich als Marker im Text des Pull Requests, damit die App die Erfassung wiederfindet. Jede weitere Sicherung
   ist ein Commit auf diesem Branch; `validate` läuft bei jedem Commit.
-- Es können mehrere Sitzungen gleichzeitig offen sein. Ein Objekt gehört zu genau einer Sitzung, eine Datei zu der
-  Sitzung, deren Objekt sie verwendet.
+- Nach der Anmeldung legt die App selbst eine leere Erfassung an ("Erfassung vom TT.MM.JJJJ"), wenn keine offene da
+  ist. Sie existiert nur im Browser; GitHub sieht sie erst mit dem ersten gesicherten Objekt. Wird sie nicht
+  umbenannt und bleibt leer, löscht die App sie beim Abmelden und beim nächsten Anmelden wieder. Nach dem Einreichen
+  wird, falls keine offene mehr da ist, gleich eine neue angelegt.
+- Es können mehrere Erfassungen gleichzeitig offen sein. Ein Objekt gehört zu genau einer Erfassung, eine Datei zu der
+  Erfassung, deren Objekt sie verwendet.
 - Die App sichert eine Sekunde nach jeder eigenen Änderung (Objekt angelegt, Agent hat Felder gesetzt, Dateien
   zugeordnet) und 30 Sekunden nach der letzten Eingabe im Editor. Lokal gelöschte Objekte werden beim nächsten
   Sichern auch aus dem Branch entfernt.
 - "Einreichen" stellt den Entwurf auf "Ready for review". Entwürfe filterst du in der PR-Liste mit `-is:draft` aus.
-- Eine eingereichte Sitzung ist eingefroren: Die App schreibt nie wieder auf ihren Branch (der Worker lehnt es ab),
-  damit Prüfende keine Benachrichtigungen über neue Commits bekommen. Weitere Objekte kommen in eine andere Sitzung.
-- Wird der Pull Request ohne Merge geschlossen, ist die Sitzung in der App wieder offen. Die nächste Sicherung legt
+- Eine eingereichte Erfassung ist eingefroren: Die App schreibt nie wieder auf ihren Branch (der Worker lehnt es ab),
+  damit Prüfende keine Benachrichtigungen über neue Commits bekommen. Weitere Objekte kommen in eine andere Erfassung.
+- Wird der Pull Request ohne Merge geschlossen, ist die Erfassung in der App wieder offen. Die nächste Sicherung legt
   einen neuen Entwurf auf demselben Branch an.
-- Nach dem Merge löscht GitHub den Branch. Die Sitzung gilt als übernommen und lässt sich in der App aus der
+- Nach dem Merge löscht GitHub den Branch. Die Erfassung gilt als übernommen und lässt sich in der App aus der
   Ansicht entfernen; im Archiv bleibt sie.

@@ -189,7 +189,7 @@
           class:dragged={ws.dragging.includes(file.sha256)}
           class:peek={!!file.objectId && ws.hover === file.objectId && ws.dragging.length === 0}
           class:failed={file.status === 'error' || file.status === 'conflict'}
-          title={ws.foreign(file) ? `${file.name} (gehört zu einer anderen Sitzung)` : file.name}
+          title={ws.foreign(file) ? `${file.name} (gehört zu einer anderen Erfassung)` : file.name}
           onpointerenter={() => (ws.hover = file.objectId && file.objectId !== ws.activeObject?.id && !ws.foreign(file) ? file.objectId : undefined)}
           onpointerleave={() => (ws.hover = undefined)}
           ondragstart={(event) => event.preventDefault()}

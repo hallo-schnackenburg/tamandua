@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Workspace, Session } from './workspace.svelte.js'
+  import { defaultName, type Workspace, type Session } from './workspace.svelte.js'
 
   // The choice of the session: its name only, the sessions in groups, a pencil to rename, and a way to make a new one.
   let { workspace: ws }: { workspace: Workspace } = $props()
@@ -20,16 +20,27 @@
   )
   let asking = $state<string>() // the session whose removal waits for a second click
 
+  /** The name a new one gets when nothing is typed (shown grayed out in the field). */
+  let suggestion = $state('')
+
   function start(next: 'rename' | 'new') {
     mode = next
     draft = next === 'rename' ? (ws.current?.name ?? '') : ''
+    suggestion = defaultName()
     listed = false
   }
 
-  function commit() {
-    if (mode === 'new' && draft.trim()) ws.createSession(draft)
+  /** Return: an empty field makes a new one with the suggested name. */
+  function confirm() {
+    if (mode === 'new') ws.createSession(draft.trim() ? draft : suggestion)
     else if (mode === 'rename' && ws.current) ws.renameSession(ws.current.id, draft)
     mode = 'view'
+  }
+
+  /** Leaving the field (a click elsewhere): keeps what was typed, but an empty field is cancelled like Escape. */
+  function leave() {
+    if (mode !== 'view' && draft.trim()) confirm()
+    else mode = 'view'
   }
 
   function focusAndSelect(node: HTMLInputElement) {
@@ -55,19 +66,23 @@
 
 <div class="sessions">
   {#if mode !== 'view'}
-    <input
-      class="name"
-      use:focusAndSelect
-      bind:value={draft}
-      placeholder="Name der Sitzung, z. B. Dachbodenfund Postkarten"
-      aria-label={mode === 'new' ? 'Name der neuen Sitzung' : 'Neuer Name der Sitzung'}
-      maxlength="100"
-      onkeydown={(e) => {
-        if (e.key === 'Enter') commit()
-        else if (e.key === 'Escape') mode = 'view'
-      }}
-      onblur={commit}
-    />
+    <span class="field">
+      <input
+        class="name"
+        use:focusAndSelect
+        bind:value={draft}
+        placeholder={mode === 'new' ? suggestion : 'Neuer Name der Erfassung'}
+        aria-label={mode === 'new' ? 'Name der neuen Erfassung' : 'Neuer Name der Erfassung'}
+        maxlength="100"
+        onkeydown={(e) => {
+          if (e.key === 'Enter') confirm()
+          else if (e.key === 'Escape') mode = 'view'
+        }}
+        onblur={leave}
+      />
+      <!-- Also a button for touch screens; pressing it must not take the focus from the field (that would cancel). -->
+      <button class="enter" type="button" title="Mit Return bestätigen" aria-label="Bestätigen" onmousedown={(e) => e.preventDefault()} onclick={confirm}>↵</button>
+    </span>
   {:else}
     <button
       class="choice"
@@ -77,7 +92,7 @@
       onclick={() => ((listed = !listed), (asking = undefined))}
       ondblclick={() => ws.current && start('rename')}
     >
-      <span class="label" class:none={!ws.current}>{ws.current?.name ?? 'Keine Sitzung'}</span>
+      <span class="label" class:none={!ws.current}>{ws.current?.name ?? 'Keine Erfassung'}</span>
       {#if ws.current}{@render mark(ws.current)}{/if}
       <span class="caret" aria-hidden="true">▾</span>
     </button>
@@ -106,8 +121,8 @@
                 {:else}
                   <button
                     class="trash"
-                    title="Sitzung entfernen"
-                    aria-label="Sitzung entfernen"
+                    title="Erfassung entfernen"
+                    aria-label="Erfassung entfernen"
                     onclick={() => (session.state === 'open' ? ws.removeSession(session.id) : (asking = session.id))}
                   >
                     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8h5.8l.6-8M7 7v3.5M9 7v3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
@@ -117,7 +132,7 @@
             </div>
           {/each}
         {/each}
-        <button class="item new" onclick={() => start('new')}>+ Neue Sitzung …</button>
+        <button class="item new" onclick={() => start('new')}>+ Neue Erfassung …</button>
       </div>
     {/if}
   {/if}
@@ -131,7 +146,10 @@
   .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .label.none { color: #888; }
   .caret { color: #888; font-size: 0.8rem; }
-  .name { font: inherit; font-size: 1.1rem; font-weight: 600; height: 2.3rem; box-sizing: border-box; padding: 0 14px; width: 22rem; max-width: 40vw; border: 1px solid #36c; border-radius: 999px; }
+  .field { position: relative; display: inline-flex; align-items: center; }
+  .enter { position: absolute; right: 8px; border: 0; background: none; color: #888; font-size: 1.1rem; line-height: 1; padding: 2px 6px; border-radius: var(--r-s); }
+  .enter:hover { color: #36c; background: #eef2fc; }
+  .name { font: inherit; font-size: 1.1rem; font-weight: 600; height: 2.3rem; box-sizing: border-box; padding: 0 40px 0 14px; width: 22rem; max-width: 40vw; border: 1px solid #36c; border-radius: 999px; }
   .list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; min-width: 22rem; max-width: 32rem; border-radius: var(--r-l); max-height: 60vh; overflow: auto; background: #fff; border: 1px solid #ccc; border-radius: 6px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.12); padding: 4px; display: flex; flex-direction: column; }
   .group { padding: 6px 8px 2px; font-size: 0.75rem; color: #888; }
   .item { display: flex; align-items: center; gap: 4px; border-radius: var(--r-s); }

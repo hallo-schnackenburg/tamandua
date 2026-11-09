@@ -59,6 +59,8 @@ export interface Session {
   createdAt: number
   /** Objects deleted here that may still be on the branch: removed from it with the next save. */
   deleted: Removed[]
+  /** Made by the app on its own and not named by the person: goes away again while it is empty (see `#begin`). */
+  auto?: true
 }
 
 /** Where an object stands, for the badge on its row. */
@@ -184,11 +186,11 @@ export function slugify(name: string): string {
     .slice(0, 40)
     .replace(/-+$/, '')
   const random = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => (b % 36).toString(36)).join('')
-  return `${base || 'sitzung'}-${random}`
+  return `${base || 'erfassung'}-${random}`
 }
 
 /** The name of the session that is made on its own, when the first object is created. */
-const defaultName = (): string =>
+export const defaultName = (): string =>
   `Erfassung vom ${new Date().toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric' })}`
 
 const cleanName = (name: string): string => name.replace(/\s+/g, ' ').trim().slice(0, 100)
@@ -323,11 +325,11 @@ export class Workspace {
   /** Why a change to the object is refused, in words for the user. */
   #refuse(object: ObjectRecord): string {
     const session = this.#sessionOf(object)
-    const name = session ? `„${session.name}“` : 'einer anderen Sitzung'
+    const name = session ? `„${session.name}“` : 'einer anderen Erfassung'
     if (session && session.id === this.currentId) {
-      return `${refer(object)} gehört zur Sitzung ${name}, die schon ${session.state === 'merged' ? 'übernommen' : 'eingereicht'} ist. Ändern kannst du es dort nicht mehr.`
+      return `${refer(object)} gehört zur Erfassung ${name}, die schon ${session.state === 'merged' ? 'übernommen' : 'eingereicht'} ist. Ändern kannst du es dort nicht mehr.`
     }
-    return `${refer(object)} gehört zur Sitzung ${name}. Wechsle dorthin, um es zu ändern.`
+    return `${refer(object)} gehört zur Erfassung ${name}. Wechsle dorthin, um es zu ändern.`
   }
 
   async load() {
@@ -360,6 +362,9 @@ export class Workspace {
     } catch (error) {
       console.error('Loading from the browser storage failed', error)
       this.saveState = 'failed'
+    } finally {
+      this.#loaded = true
+      this.#begin()
     }
   }
 
@@ -386,9 +391,9 @@ export class Workspace {
     make('Übernommen', 'merged', accepted)
   }
 
-  #add(name: string, state: Session['state'] = 'open'): Session {
+  #add(name: string, state: Session['state'] = 'open', auto = false): Session {
     name = cleanName(name) || defaultName()
-    this.sessions.push({ id: slugify(name), name, state, createdAt: Date.now(), deleted: [] })
+    this.sessions.push({ id: slugify(name), name, state, createdAt: Date.now(), deleted: [], ...(auto ? { auto: true as const } : {}) })
     const session = this.sessions[this.sessions.length - 1]
     this.#dirtySessions.add(session.id)
     this.#schedule()
@@ -420,6 +425,7 @@ export class Workspace {
     name = cleanName(name)
     if (!session || !name || name === session.name) return
     session.name = name
+    session.auto = undefined // the person named it: it stays
     this.#dirtySessions.add(id)
     this.#schedule()
     // The pull request carries the name too (it is how the session is found again). Best effort: it is renamed with the next try.
@@ -440,15 +446,27 @@ export class Workspace {
   }
 
   /** Takes a accepted session with its objects and files out of this view. They stay in the repository and the bucket. */
-  /** Merged sessions can be taken out of the view; an open one only while nothing belongs to it and nothing was saved for it. */
+  /** Open and nothing belongs to it, nothing was deleted from it, nothing was saved for it. */
+  #empty(session: Session): boolean {
+    return session.state === 'open' && session.deleted.length === 0 && !session.pull && !this.objects.some((o) => o.sessionId === session.id)
+  }
+
+  /**
+   * Merged sessions can be taken out of the view; an open one only while it is empty, and never the last open one:
+   * there is always one to start in.
+   */
   removable(session: Session): boolean {
     if (session.state === 'merged') return true
-    return session.state === 'open' && session.deleted.length === 0 && !session.pull && !this.objects.some((o) => o.sessionId === session.id)
+    return this.#empty(session) && this.sessions.some((s) => s.state === 'open' && s.id !== session.id)
   }
 
   removeSession(id: string) {
     const session = this.sessions.find((s) => s.id === id)
-    if (!session || !this.removable(session)) return
+    if (session && this.removable(session)) this.#remove(session, false)
+  }
+
+  #remove(session: Session, quiet: boolean) {
+    const id = session.id
     const gone = this.objects.filter((o) => o.sessionId === id)
     const ids = new Set(gone.map((o) => o.id))
     const shas = new Set(this.files.filter((f) => f.objectId && ids.has(f.objectId)).map((f) => f.sha256))
@@ -470,7 +488,37 @@ export class Workspace {
     if (this.currentId === id) this.currentId = (this.sessions.find((s) => s.state === 'open') ?? this.sessions[0])?.id
     this.#markUi()
     this.#schedule()
-    this.#say('log', `Die Sitzung „${session.name}“ wurde aus der Ansicht entfernt.`)
+    if (!quiet) this.#say('log', `Die Erfassung „${session.name}“ wurde aus der Ansicht entfernt.`)
+  }
+
+  #loaded = false
+  #started = false
+
+  /**
+   * Once the browser's data is read and somebody is signed in: sessions that the app made on its own and that
+   * stayed empty go away, and if nothing open is left, a fresh one is made, so that the person can start at once.
+   * It exists only here, in the browser; the branch and the pull request come with the first saved object.
+   */
+  #begin() {
+    if (this.#started || !this.#loaded || this.login.state !== 'user') return
+    this.#started = true
+    this.#dropAuto()
+    this.#ensureOpen(false)
+  }
+
+  #dropAuto() {
+    for (const session of [...this.sessions]) if (session.auto && this.#empty(session)) this.#remove(session, true)
+  }
+
+  /** Makes a fresh session if none is open, and shows it (`show`) or, at the start, only where nothing is shown yet. */
+  #ensureOpen(show: boolean) {
+    if (this.sessions.some((s) => s.state === 'open')) return
+    const session = this.#add(defaultName(), 'open', true)
+    if (show) this.selectSession(session.id)
+    else {
+      this.currentId = session.id
+      this.#markUi()
+    }
   }
 
   // --- dropping files: hash one after the other, upload in the background ---
@@ -528,8 +576,8 @@ export class Workspace {
     if (here.length) {
       sentences.push(here.length === 1 ? `Die Datei „${here[0]}“ war schon vorhanden.` : `${here.length} Dateien waren schon vorhanden.`)
     }
-    for (const { name, session } of batch.elsewhere.slice(0, 3)) sentences.push(`Die Datei „${name}“ gehört schon zur Sitzung „${session}“.`)
-    if (batch.elsewhere.length > 3) sentences.push(`${batch.elsewhere.length - 3} weitere Dateien gehören schon zu anderen Sitzungen.`)
+    for (const { name, session } of batch.elsewhere.slice(0, 3)) sentences.push(`Die Datei „${name}“ gehört schon zur Erfassung „${session}“.`)
+    if (batch.elsewhere.length > 3) sentences.push(`${batch.elsewhere.length - 3} weitere Dateien gehören schon zu anderen Erfassungen.`)
     if (batch.unreadable.length) sentences.push(`${them(batch.unreadable)} ${batch.unreadable.length === 1 ? 'konnte' : 'konnten'} nicht gelesen werden ${names(batch.unreadable)}.`)
     if (fresh > 0 && !batch.objectId && !asked) sentences.push('Möchtest du sie jetzt beschreiben?')
     if (sentences.length) this.#say('assistant', sentences.join(' '))
@@ -576,7 +624,7 @@ export class Workspace {
         record = existing
         if (this.foreign(existing)) {
           const owner = this.objects.find((o) => o.id === existing.objectId)
-          batch.elsewhere.push({ name: file.name, session: (owner && this.#sessionOf(owner)?.name) || 'einer anderen Sitzung' })
+          batch.elsewhere.push({ name: file.name, session: (owner && this.#sessionOf(owner)?.name) || 'einer anderen Erfassung' })
         }
       } else if (existing) {
         void this.#upload(existing, file, batch) // try again after an error
@@ -1004,7 +1052,7 @@ export class Workspace {
     }
     const session = this.#openSession()
     if (!session) {
-      out.notes.push(`Die Sitzung „${this.current?.name}“ ist ${this.current?.state === 'merged' ? 'übernommen' : 'eingereicht'}. Wähle oben eine andere Sitzung oder lege eine neue an.`)
+      out.notes.push(`Die Erfassung „${this.current?.name}“ ist ${this.current?.state === 'merged' ? 'übernommen' : 'eingereicht'}. Wähle oben eine andere Erfassung oder lege eine neue an.`)
       return []
     }
     const together = call.type === 'document' && call.together !== false
@@ -1179,6 +1227,7 @@ export class Workspace {
       const user = await this.#backend.me()
       this.login = user ? { state: 'user', user } : { state: 'anonymous', notice }
       if (user) {
+        this.#begin()
         this.#syncAfterApp()
         void this.checkPulls()
       }
@@ -1191,12 +1240,15 @@ export class Workspace {
   signedOut() {
     if (this.login.state === 'anonymous') return
     this.#stopTimers()
+    this.#started = false
     this.login = { state: 'anonymous', notice: 'Deine Sitzung ist abgelaufen. Bitte melde dich neu an.' }
   }
 
   async logout() {
     await this.#backend.logout()
     this.#stopTimers()
+    this.#dropAuto()
+    this.#started = false
     this.login = { state: 'anonymous' }
   }
 
@@ -1317,7 +1369,7 @@ export class Workspace {
           // Submitted from somewhere else (or before this browser knew): what was changed here is not taken any more.
           session.state = 'submitted'
           this.#dirtySessions.add(session.id)
-          this.#say('status', `Die Sitzung „${session.name}“ war leider schon eingereicht (vielleicht in einem anderen Browser oder Tab). Deine Änderungen konnten nicht mehr gesichert werden.`)
+          this.#say('status', `Die Erfassung „${session.name}“ war leider schon eingereicht (vielleicht in einem anderen Browser oder Tab). Deine Änderungen konnten nicht mehr gesichert werden.`)
         } else {
           failure ??= error as Error
           if (!this.failedSessions.includes(session.id)) this.failedSessions.push(session.id)
@@ -1379,7 +1431,8 @@ export class Workspace {
       this.#dirtySessions.add(session.id)
       this.#schedule()
       const n = objects.length
-      this.#say('assistant', `Ich habe die Sitzung „${session.name}“ mit ${n === 1 ? 'einem Objekt' : `${n} Objekten`} eingereicht. Sie wird jetzt geprüft. Du kannst in einer anderen Sitzung weitermachen.`)
+      this.#say('assistant', `Ich habe die Erfassung „${session.name}“ mit ${n === 1 ? 'einem Objekt' : `${n} Objekten`} eingereicht. Sie wird jetzt geprüft. Du kannst in einer anderen Erfassung weitermachen.`)
+      this.#ensureOpen(true)
     } catch (error) {
       if (error instanceof Locked) {
         session.state = 'submitted'
@@ -1403,13 +1456,13 @@ export class Workspace {
         const n = this.objects.filter((o) => o.sessionId === session.id).length
         if (pull.merged) {
           session.state = 'merged'
-          this.#say('assistant', `Die Sitzung „${session.name}“ wurde geprüft und übernommen (${n === 1 ? 'ein Objekt' : `${n} Objekte`}). Danke!`)
+          this.#say('assistant', `Die Erfassung „${session.name}“ wurde geprüft und übernommen (${n === 1 ? 'ein Objekt' : `${n} Objekte`}). Danke!`)
         } else {
           // Closed without being accepted: the branch is still there, the session can be revised and submitted again.
           session.state = 'open'
           session.pull = undefined
           session.url = undefined
-          this.#say('status', `Die Einreichung der Sitzung „${session.name}“ wurde nicht übernommen. Du kannst sie überarbeiten und erneut einreichen.`)
+          this.#say('status', `Die Einreichung der Erfassung „${session.name}“ wurde nicht übernommen. Du kannst sie überarbeiten und erneut einreichen.`)
         }
         this.#dirtySessions.add(session.id)
         this.#schedule()
