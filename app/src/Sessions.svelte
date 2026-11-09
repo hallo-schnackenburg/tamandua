@@ -13,7 +13,7 @@
     { state: 'submitted', title: 'Eingereicht' },
     { state: 'merged', title: 'Übernommen' },
   ] as const
-  const BADGES = { open: '', submitted: 'wird geprüft', merged: 'übernommen' } as const
+  const BADGES = { open: '', submitted: 'Eingereicht', merged: 'Übernommen' } as const
 
   const groups = $derived(
     GROUPS.map((g) => ({ ...g, sessions: ws.sessions.filter((s) => s.state === g.state) })).filter((g) => g.sessions.length > 0),
@@ -146,6 +146,9 @@
   .spinner { flex: none; width: 10px; height: 10px; border: 1.5px solid #b9c8ee; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
   .failed { flex: none; width: 14px; height: 14px; display: grid; place-items: center; border-radius: 50%; background: #c92a2a; color: #fff; font-size: 0.72rem; font-weight: 700; line-height: 1; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .badge { font-size: 0.72rem; color: #36c; border: 1px solid #b9c8ee; border-radius: 999px; padding: 0 7px; white-space: nowrap; }
-  .badge.merged { color: #2a7a3b; border-color: #b5dcbd; }
+  /* The same labels as in the header, only narrower. */
+  .badge { display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; height: 1.2rem; padding: 0 8px; border-radius: 999px; font-size: 0.72rem; white-space: nowrap; background: #fdebd7; color: #a85408; }
+  .badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #e07b1a; }
+  .badge.merged { background: #e9f5ec; color: #2a7a3b; }
+  .badge.merged::before { background: #3aa655; }
 </style>

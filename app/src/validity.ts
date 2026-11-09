@@ -25,9 +25,26 @@ function isEmpty(text: string, path: string): boolean {
   return value === null || value === undefined || value === ''
 }
 
-const unfilled = (text: string, issue: Issue) => MISSING.test(issue.message) || isEmpty(text, issue.path)
+// An unknown field stays an error even when it is empty ("titlez:"): it is not a field that waits to be filled in.
+const UNKNOWN = /^unknown field /
 
-export function validityOf(text: string): { state: Validity; hint: string } {
+const unfilled = (text: string, issue: Issue) => MISSING.test(issue.message) || (!UNKNOWN.test(issue.message) && isEmpty(text, issue.path))
+
+type Result = { state: Validity; hint: string }
+
+// The same text is asked for again and again (once per tile, once per row, on every redraw): remember the answers.
+const known = new Map<string, Result>()
+
+export function validityOf(text: string): Result {
+  const hit = known.get(text)
+  if (hit) return hit
+  const result = check(text)
+  if (known.size >= 300) known.delete(known.keys().next().value as string)
+  known.set(text, result)
+  return result
+}
+
+function check(text: string): Result {
   const issues = validateObjectYaml(text)
   if (issues.length === 0) return { state: 'valid', hint: VALIDITY_NAMES.valid }
   const state: Validity = issues.every((issue) => unfilled(text, issue)) ? 'incomplete' : 'invalid'

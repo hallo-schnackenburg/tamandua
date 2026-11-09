@@ -103,9 +103,12 @@
           <button class="plain" onclick={() => (confirming = false)}>Abbrechen</button>
         </span>
       {:else}
-        <button class="submit" disabled={ws.current?.state !== 'open' || ws.shown.length === 0 || ws.submitting} onclick={() => (confirming = true)}>
-          {ws.submitting ? 'Wird eingereicht …' : 'Einreichen'}
-        </button>
+        <!-- The wrapper carries the hint: a disabled button shows none in every browser. -->
+        <span class="submit-wrap" title={ws.notReady.length > 0 ? 'Einreichen geht erst, wenn alle Objekte vollständig sind.' : ''}>
+          <button class="submit" disabled={ws.current?.state !== 'open' || ws.shown.length === 0 || ws.notReady.length > 0 || ws.submitting} onclick={() => (confirming = true)}>
+            {ws.submitting ? 'Wird eingereicht …' : 'Einreichen'}
+          </button>
+        </span>
       {/if}
       <span class="sync" class:failed={ws.syncState === 'failed'} role="status">
         {#if ws.syncState === 'failed'}
@@ -194,6 +197,8 @@
   .state.merged::before { background: #3aa655; }
   button.submit { height: 2.3rem; padding: 0 18px; border-radius: 999px; border: 0; background: #36c; color: #fff; font-weight: 600; box-shadow: 0 1px 2px rgb(51 102 204 / 0.35); }
   button.submit:hover:not(:disabled) { background: #2a58b8; }
+  button.submit:disabled { background: #b4c3e6; box-shadow: none; cursor: default; }
+  .submit-wrap { display: inline-flex; }
   button.plain { border-radius: 999px; }
   .add { margin-left: auto; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 50%; color: #36c; font-size: 1.3rem; font-weight: 400; line-height: 1; cursor: pointer; }
   .add:hover { background: #eef2fb; }

@@ -39,6 +39,12 @@ describe('buildModelRequest', () => {
     expect(built.system).toContain('building')
   })
 
+  it("tells the model today's date in the archive's time zone", () => {
+    // 23:30 UTC on 8 November is already 9 November in Schnackenburg
+    const built = buildModelRequest(request(), 'm', new Date('2026-11-08T23:30:00Z'))
+    expect(built.messages[built.messages.length - 1].content).toContain('Today is 2026-11-09.')
+  })
+
   it('forces a tool call and offers the three tools', () => {
     const built = buildModelRequest(request(), 'claude-haiku-5-5')
     expect(built.model).toBe('claude-haiku-5-5')
@@ -86,6 +92,19 @@ describe('buildModelRequest', () => {
 
 describe('toToolCalls', () => {
   const answer = (...content: unknown[]) => ({ content })
+
+  it('drops placeholders the model made up for unknown values', () => {
+    const calls = toToolCalls(
+      answer(
+        { type: 'tool_use', name: 'create_object', input: { type: 'document', fields: { title: 'test', date: '<UNKNOWN>' } } },
+        { type: 'tool_use', name: 'patch', input: { object: 1, field: 'date', value: 'unbekannt' } },
+      ),
+    )
+    const [create] = calls
+    expect(create).toMatchObject({ tool: 'create_object', fields: { title: 'test' } })
+    expect((create as { fields: object }).fields).not.toHaveProperty('date')
+    expect(calls).toHaveLength(1) // the patch with a placeholder value is dropped
+  })
 
   it('converts tool calls', () => {
     expect(

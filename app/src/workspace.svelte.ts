@@ -9,6 +9,7 @@ import * as db from './db.js'
 import { FIELD_NAMES, objectLabel } from './labels.js'
 import { prepareFile } from './prepare.js'
 import { newObjectText } from './template.js'
+import { validityOf } from './validity.js'
 import type { FileStore } from './uploader.js'
 import { SignedOut } from './api.js'
 import { Locked, type Backend, type Removed, type SessionRef, type User } from './backend.js'
@@ -278,6 +279,11 @@ export class Workspace {
   /** The objects of the shown session. */
   get shown(): ObjectRecord[] {
     return this.objects.filter((o) => o.sessionId === this.currentId)
+  }
+
+  /** Objects of the shown session that are not valid yet: as long as there are any, the session cannot be submitted. */
+  get notReady(): ObjectRecord[] {
+    return this.shown.filter((o) => validityOf(o.text).state !== 'valid')
   }
 
   /** Objects that are not saved to GitHub yet (frozen sessions do not count: they are not saved any more). */
@@ -1274,7 +1280,7 @@ export class Workspace {
           // Submitted from somewhere else (or before this browser knew): what was changed here is not taken any more.
           session.state = 'submitted'
           this.#dirtySessions.add(session.id)
-          this.#say('status', `Die Sitzung „${session.name}“ war schon eingereicht. Spätere Änderungen daran werden nicht mehr gesichert.`)
+          this.#say('status', `Die Sitzung „${session.name}“ war leider schon eingereicht (vielleicht in einem anderen Browser oder Tab). Deine Änderungen konnten nicht mehr gesichert werden.`)
         } else {
           failure ??= error as Error
           if (!this.failedSessions.includes(session.id)) this.failedSessions.push(session.id)
@@ -1319,7 +1325,7 @@ export class Workspace {
       const open = objects.filter((o) => validateObjectYaml(o.text).length > 0)
       if (open.length > 0) {
         const list = open.slice(0, 3).map(refer).join(', ') + (open.length > 3 ? ', …' : '')
-        this.#say('status', `Eingereicht wird erst, wenn alle Objekte vollständig sind. Es fehlt noch etwas bei: ${list}.`)
+        this.#say('status', `Wir können erst einreichen, wenn alle Objekte vollständig sind. Noch offen: ${list}.`)
         return
       }
       // Not syncing in the middle of an edit: wait for a running save, then save the rest.

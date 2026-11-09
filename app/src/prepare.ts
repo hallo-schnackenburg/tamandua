@@ -72,6 +72,8 @@ export async function prepareFile(file: File, onProgress: (fraction: number) => 
 
   entry.width = decoded.width
   entry.height = decoded.height
+  // An image that is not bigger than the preview would get a copy of itself: no variant then (the list still shows the local preview).
+  if (Math.max(decoded.width, decoded.height) <= PREVIEW_SIZE) return { entry, preview: decoded.preview }
   const previewHash = await hashBlob(decoded.preview)
   entry.variants = [
     {

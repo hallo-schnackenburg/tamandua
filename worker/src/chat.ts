@@ -82,6 +82,8 @@ Fields (YAML keys, in English): title, description, date, location, origin, hold
 - holder is who has the original now and where, same shape as origin: the town archive, a family, a collector, a gallery. owner is who it belongs to. Fill only what the user says; never infer one from the other. Examples: "Leihgabe der Familie Müller, liegt jetzt im Stadtarchiv" gives holder {"name": "Stadtarchiv Schnackenburg", "type": "business"} and owner {"name": "Familie Müller", "type": "person"}; "Gemälde gehört Herrn Zenziper, hängt in der Galerie Elbe 5" gives owner {"name": "Zenziper", "type": "person"} and holder {"name": "Galerie Elbe 5", "type": "business"}. Without such a statement leave both out.
 - subjects is a list of the things the object shows or mentions, each {name, type, note, location}: people, places, buildings, businesses, events, things. type is one of: ${ENTITY_TYPES.join(', ')}. Example: [{"name": "Konditorei Müller", "type": "business", "note": "am Markt"}]. To add one, send the whole list as value and the current list as old.
 - notes is only for what the user explicitly says and that fits no other field (e.g. where it was found, how it came into the archive). Never write file names, upload details or your own remarks into notes, and never use notes when another field fits. File names may hint at a date; mention that with a say call instead of writing it anywhere.
+- The message context starts with today's date. Turn "heute" and "gestern" into that concrete date ("2026-11-09" style, or the German form the user gave); other relative dates ("letzten Sommer") are not guessed, ask with a say call.
+- Never write a placeholder such as "<UNKNOWN>", "unbekannt" or "?" into a field. If you do not know a value, leave the field out.
 - A two-digit year such as "65" means 1965 in this archive; say so briefly with a say call when you assume it.
 - Write names and places as the user gave them. Do not invent facts (no guessed dates, names or titles). Leave out what the user did not say.
 - Several objects at once: if the user's message applies to all of them, issue one patch per object.
@@ -153,6 +155,11 @@ export const TOOLS = [
 type Turn = { role: 'user' | 'assistant'; content: string }
 
 /** The model wants alternating turns that start with the user; merge neighbours with the same role. */
+/** A value the model made up for something it does not know ("<UNKNOWN>"): it must not end up in the YAML. */
+const isPlaceholder = (value: unknown): boolean => typeof value === 'string' && /^\s*(<[^>]*>|\[[^\]]*\]|unknown|unbekannt|\?)\s*$/i.test(value)
+const withoutPlaceholders = (fields: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(fields).filter(([, value]) => !isPlaceholder(value)))
+
 function addTurn(turns: Turn[], role: Turn['role'], content: string) {
   const last = turns[turns.length - 1]
   if (last && last.role === role) last.content += `\n\n${content}`
@@ -160,7 +167,12 @@ function addTurn(turns: Turn[], role: Turn['role'], content: string) {
   // an assistant turn at the very start is dropped
 }
 
-function describeContext(request: ChatRequest): string {
+/** Today's date in the archive's time zone, as "2026-11-09". */
+export function todayIn(now: Date): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)
+}
+
+function describeContext(request: ChatRequest, now: Date): string {
   const files = request.files.map((f) => `- ${f.name}: ${f.object ? `belongs to Objekt ${f.object}` : 'no object yet'}`).join('\n')
   const objects = request.objects
     .map((o) => {
@@ -168,15 +180,15 @@ function describeContext(request: ChatRequest): string {
       return `Objekt ${o.number}${notes.length ? ` (${notes.join('; ')})` : ''}:\n\`\`\`yaml\n${o.text.trim()}\n\`\`\``
     })
     .join('\n\n')
-  return [`Files this message is about:\n${files || '(none)'}`, objects && `Their objects:\n${objects}`, `Message from the user:\n${request.message}`]
+  return [`Today is ${todayIn(now)}.`, `Files this message is about:\n${files || '(none)'}`, objects && `Their objects:\n${objects}`, `Message from the user:\n${request.message}`]
     .filter(Boolean)
     .join('\n\n')
 }
 
-export function buildModelRequest(request: ChatRequest, model: string) {
+export function buildModelRequest(request: ChatRequest, model: string, now: Date = new Date()) {
   const turns: Turn[] = []
   for (const entry of request.history) addTurn(turns, entry.role, entry.text)
-  addTurn(turns, 'user', describeContext(request))
+  addTurn(turns, 'user', describeContext(request, now))
   return {
     model,
     max_tokens: 1024,
@@ -212,7 +224,7 @@ export function toToolCalls(response: unknown): ToolCall[] {
         // a subtype that does not belong to the type is left out rather than written into the YAML
         subtype: typeof input.subtype === 'string' && subtypes.includes(input.subtype) ? input.subtype : undefined,
         together: typeof input.together === 'boolean' ? input.together : undefined,
-        fields: isRecord(input.fields) ? input.fields : undefined,
+        fields: isRecord(input.fields) ? withoutPlaceholders(input.fields) : undefined,
       })
     } else if (
       block.name === 'geocode' &&
@@ -230,7 +242,7 @@ export function toToolCalls(response: unknown): ToolCall[] {
         subject: typeof input.subject === 'string' ? input.subject : undefined,
         query: input.query.trim(),
       })
-    } else if (block.name === 'patch' && Number.isInteger(input.object) && typeof input.field === 'string' && 'value' in input) {
+    } else if (block.name === 'patch' && Number.isInteger(input.object) && typeof input.field === 'string' && 'value' in input && !isPlaceholder(input.value)) {
       calls.push({ tool: 'patch', object: input.object as number, field: input.field, value: input.value, old: input.old })
     }
   }

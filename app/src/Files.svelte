@@ -251,9 +251,9 @@
   /* A tile is the picture with its name below, no box. What is open or picked shows as a ring around the picture. */
   .tile { position: relative; display: flex; flex-direction: column; gap: 5px; text-align: left; font: inherit; font-size: 0.78rem; cursor: pointer; user-select: none; min-width: 0; }
   .thumb { position: relative; display: block; border-radius: var(--r-m); overflow: hidden; box-shadow: 0 0 0 1px #e3e3e3; }
-  .tile.current .thumb { box-shadow: 0 0 0 2px #36c; }
-  .tile.selected .thumb { box-shadow: 0 0 0 2px #9db8ee; }
-  .tile.current.selected .thumb { box-shadow: 0 0 0 2px #36c; }
+  .tile.current .thumb { box-shadow: 0 0 0 3px #36c; }
+  .tile.selected .thumb { box-shadow: 0 0 0 3px #6f93e6; }
+  .tile.current.selected .thumb { box-shadow: 0 0 0 3px #36c; }
   .tile.peek .thumb { box-shadow: 0 0 0 2px #8fadea; }
   .tile.dragged { opacity: 0.5; }
   .tile.foreign { opacity: 0.35; cursor: default; }
