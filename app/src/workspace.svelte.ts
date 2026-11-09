@@ -357,7 +357,8 @@ export class Workspace {
         this.#anchor = this.selection[0]
       }
       this.#schedule()
-    } catch {
+    } catch (error) {
+      console.error('Loading from the browser storage failed', error)
       this.saveState = 'failed'
     }
   }
@@ -1160,7 +1161,8 @@ export class Workspace {
         removedSessions,
       )
       this.saveState = 'saved'
-    } catch {
+    } catch (error) {
+      console.error('Saving to the browser storage failed', error)
       this.saveState = 'failed'
     }
   }

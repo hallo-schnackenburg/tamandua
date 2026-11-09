@@ -60,10 +60,16 @@ export function s3Config(env: UploadEnv): S3Config | null {
   }
 }
 
-/** Is the file in the bucket already, with the size we expect? A path holds one content only (it contains the hash). */
+/**
+ * Is the file in the bucket already, with the size we expect? A path holds one content only (it contains the hash).
+ * Asks with GET, not HEAD: in the deployed Worker the request passes through Cloudflare, which turns a HEAD into a
+ * GET towards the bucket, and then the signature (made for HEAD) no longer fits and the bucket answers 403.
+ * The body is never read; cancelling it keeps the file from being transferred.
+ */
 async function isThere(config: S3Config, item: UploadItem, fetchFn: typeof fetch): Promise<boolean> {
-  const url = await presign(config, { method: 'HEAD', key: item.path, expires: 60 })
-  const response = await fetchFn(url, { method: 'HEAD' })
+  const url = await presign(config, { method: 'GET', key: item.path, expires: 60 })
+  const response = await fetchFn(url)
+  await response.body?.cancel()
   if (response.status === 404) return false
   if (!response.ok) throw new Error(`The bucket answered ${response.status}.`)
   const length = response.headers.get('content-length')

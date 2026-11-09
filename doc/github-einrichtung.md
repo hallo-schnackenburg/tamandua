@@ -5,10 +5,27 @@ Alles in der GitHub-Organisation bzw. dem Konto, dem das Daten-Repo gehört.
 
 ## 1. Daten-Repo
 
-1. Repo anlegen (`archive-dev` für local, `archive-staging`, `archive`), öffentlich.
-2. Den Inhalt von `templates/archive/` aus diesem Repo
-   (`.github/workflows/validate.yml`) hineinkopieren. Die Vorlage holt das Tool-Repo
-   `hallo-schnackenburg/tamandua`; es muss öffentlich sein.
+1. Repo anlegen (`archive-dev` für local, `archive-staging`, `archive-production`), öffentlich
+   und **leer**: ohne README, ohne `.gitignore`, ohne Lizenz.
+2. Die Vorlage `templates/archive/` als ersten Commit auf `main` hochladen. Sie enthält
+   `.github/workflows/validate.yml`, das das Tool-Repo `hallo-schnackenburg/tamandua` holt;
+   es muss öffentlich sein. Aus dem Root dieses Repos (hier für staging):
+
+   ```
+   cd templates/archive
+   git init -b main
+   git add .
+   git commit -m "Initial archive"
+   git remote add origin git@github.com:hallo-schnackenburg/archive-staging.git
+   git push -u origin main
+   rm -rf .git
+   ```
+
+   Das letzte Kommando entfernt das Hilfs-Repo wieder, damit `templates/archive` hier ein
+   normaler Ordner bleibt. Ohne diesen ersten Commit gibt es keinen Branch `main`, und die App
+   meldet "Git Repository is empty" (409), sobald sie Änderungen sichern will. Die App kann das
+   nicht selbst nachholen: Der Workflow liegt unter `.github/workflows/`, und dort dürfen
+   GitHub Apps nur mit der Berechtigung "Workflows" schreiben, die wir bewusst nicht vergeben.
 3. Settings > General: "Automatically delete head branches" einschalten.
 4. Settings > Branches: Regel für `main`: "Require a pull request before merging" und
    "Require status checks to pass" mit dem Check `validate`.
@@ -31,7 +48,8 @@ Settings > Developer settings > GitHub Apps > New GitHub App.
 - "Where can this app be installed": Only on this account
 
 Danach auf der App-Seite "Generate a new client secret" und die Client ID
-notieren. Dann "Install App" und nur das Daten-Repo auswählen.
+notieren. Dann "Install App", die Organisation wählen und nur das Daten-Repo auswählen. Ohne Installation
+sieht die App das Repo nicht, und der Login endet mit "Not Found" (`?login=failed`).
 
 ## 3. Worker
 
