@@ -22,6 +22,8 @@
   const extension = (name: string) => (name.split('.').pop() ?? '').toLowerCase()
 
   let over = $state(false) // files from outside are over the pane
+  // A click on empty space only counts if it began there too (a dragged tile that is dropped on empty space must not deselect).
+  let downOnEmpty = false
   let zone: HTMLElement | undefined
 
   // The whole pane is tinted, not only the area of the tiles; the tiles stay visible below the tint (the style is below, `:global`).
@@ -144,11 +146,18 @@
      Tiles are moved with the pointer (see above); the browser's own dragging of the tiles and their
      preview images is switched off, otherwise it would take a dragged image along as a file, and
      dropping it back here would add that image as a new file. -->
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <div
   class="zone"
   bind:this={zone}
   role="region"
   aria-label="Dateien"
+  onpointerdown={(event) => (downOnEmpty = !(event.target as Element).closest('.tile'))}
+  onclick={(event) => {
+    // Only a click that began and ended on empty space: a tile that was dragged and dropped there does not count.
+    if (downOnEmpty && !(event.target as Element).closest('.tile')) ws.clearSelection()
+    downOnEmpty = false
+  }}
   ondragover={(event) => {
     if (!event.dataTransfer?.types.includes('Files')) return // not files from outside
     event.preventDefault()

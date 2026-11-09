@@ -135,6 +135,9 @@
       <section class="pane">
         <h2>
           Dateien
+          {#if ws.progress}
+            <span class="progress" role="status"><span class="spinner" aria-hidden="true"></span>{ws.progress.done} von {ws.progress.total}</span>
+          {/if}
           <label class="add" title="Dateien hinzufügen" aria-label="Dateien hinzufügen">
             +
             <input type="file" multiple onchange={pick} />
@@ -151,7 +154,7 @@
           {@const session = ws.current}
           <p class="banner {session.state}" role="status">
             {#if session.state === 'submitted'}
-              Diese Sitzung ist eingereicht und wird geprüft. Sie kann hier nicht mehr geändert werden.
+              Diese Sitzung ist eingereicht. Sie kann hier nicht mehr geändert werden.
               {#if session.url}<a href={session.url} target="_blank" rel="noreferrer">Auf GitHub ansehen</a>{/if}
             {:else}
               Diese Sitzung ist ins Archiv übernommen.
@@ -200,6 +203,10 @@
   button.submit:disabled { background: #b4c3e6; box-shadow: none; cursor: default; }
   .submit-wrap { display: inline-flex; }
   button.plain { border-radius: 999px; }
+  .progress { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 400; color: #777; }
+  .progress + .add { margin-left: 6px; }
+  .spinner { width: 10px; height: 10px; border: 1.5px solid #b9c8ee; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .add { margin-left: auto; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 50%; color: #36c; font-size: 1.3rem; font-weight: 400; line-height: 1; cursor: pointer; }
   .add:hover { background: #eef2fb; }
   .add input { display: none; }

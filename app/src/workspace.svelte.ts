@@ -199,6 +199,8 @@ export class Workspace {
   files = $state<FileRecord[]>([])
   objects = $state<ObjectRecord[]>([])
   pending = $state<Pending[]>([])
+  /** How far the files that were just dropped are (stored and uploaded); none when nothing is going on. */
+  progress = $state<{ done: number; total: number } | undefined>()
   chat = $state<ChatMessage[]>([])
   /** True while the agent is working on a message. */
   busy = $state(false)
@@ -244,6 +246,7 @@ export class Workspace {
   #syncAgain = false
   #anchor: string | undefined
   #queue: { file: File; batch: Batch }[] = []
+  #batches = new Set<Batch>()
   #busy = false
   #dirtyFiles = new Set<string>()
   #dirtyObjects = new Set<string>()
@@ -492,6 +495,15 @@ export class Workspace {
     if (batch.duplicates.length) parts.push(`${batch.duplicates.length} schon vorhanden ${names(batch.duplicates)}`)
     if (done < batch.total) parts.push(`${batch.total - done} in Arbeit`)
     batch.message.text = `${batch.total} ${batch.total === 1 ? 'Datei' : 'Dateien'} abgelegt: ${parts.join(', ')}`
+    if (done >= batch.total) this.#batches.delete(batch)
+    else this.#batches.add(batch)
+    let total = 0
+    let finished = 0
+    for (const open of this.#batches) {
+      total += open.total
+      finished += open.uploaded + open.conflicts.length + open.failed.length + open.duplicates.length
+    }
+    this.progress = total > 1 ? { done: finished, total } : undefined // one file shows its own tile
     this.#markChat()
     if (batch.processed === batch.total && !batch.listedTold) this.#listed(batch)
     if (done === batch.total && !batch.doneTold) this.#uploaded(batch)
@@ -650,6 +662,17 @@ export class Workspace {
   }
 
   /** Closes the open object. The selection stays. */
+  /** A click on empty space: nothing is selected any more and no object is open. */
+  clearSelection() {
+    this.leave()
+    this.selection = []
+    this.active = undefined
+    this.#anchor = undefined
+    this.picked = false
+    this.#markUi()
+    this.focusTick++
+  }
+
   collapse() {
     this.leave()
     this.active = undefined
@@ -732,6 +755,18 @@ export class Workspace {
     if (log.length) this.#say('log', log.join('\n'))
     if (told.length || notes.length) this.#say('assistant', [...told, ...notes].join(' '))
     this.activate(objectId)
+  }
+
+  /** Deletes an object: its files are taken out and stay in the file list, free to go into another object. */
+  removeObject(id: string) {
+    const object = this.objects.find((o) => o.id === id)
+    if (!object || !this.writable(object)) return
+    const shas = this.files.filter((f) => f.objectId === id).map((f) => f.sha256)
+    if (shas.length > 0) return this.detach(shas)
+    const told: string[] = []
+    const log: string[] = []
+    this.#discard(new Set([object]), log, told)
+    this.#say('assistant', told.join(' '))
   }
 
   /** Takes files out of their objects. An object without files is deleted. */

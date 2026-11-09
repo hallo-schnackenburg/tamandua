@@ -18,6 +18,11 @@
 
   let { workspace: ws }: { workspace: Workspace } = $props()
 
+  // The object that is asked about right now ("Löschen?").
+  let asking = $state<string | undefined>()
+  // A click on empty space only counts if it began there too.
+  let downOnEmpty = false
+
   // The object of the file that was clicked last; its row is open, all others are closed.
   const active = $derived(ws.activeObject)
   const text = $derived(active?.text ?? '')
@@ -49,7 +54,15 @@
   })
 </script>
 
-<div class="list">
+<div
+  class="list"
+  role="presentation"
+  onpointerdown={(event) => (downOnEmpty = !(event.target as Element).closest('.row'))}
+  onclick={(event) => {
+    if (downOnEmpty && !(event.target as Element).closest('.row')) ws.clearSelection()
+    downOnEmpty = false
+  }}
+>
   {#each ws.shown as object (object.id)}
     {@const info = summary(object)}
     {@const open = active?.id === object.id}
@@ -97,6 +110,19 @@
           <span class="kind" title={info.validity.hint}><i class="dot {info.validity.state}"></i>{info.kind}</span>
         {/if}
       </button>
+      {#if ws.writable(object)}
+        <span class="remove">
+          {#if asking === object.id}
+            <span class="ask">Objekt löschen?</span>
+            <button class="yes" onclick={() => { asking = undefined; ws.removeObject(object.id) }}>Ja</button>
+            <button class="no" onclick={() => (asking = undefined)}>Nein</button>
+          {:else}
+            <button class="trash" title="Objekt löschen (die Dateien bleiben)" aria-label="Objekt löschen" onclick={() => (asking = object.id)}>
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8h5.8l.6-8M7 7v3.5M9 7v3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </button>
+          {/if}
+        </span>
+      {/if}
       {#if open}
         <div class="body">
           <!-- {#key}: a new editor per object, so that undo never reaches into another object. -->
@@ -125,7 +151,7 @@
 
 <style>
   .list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-  .row { flex: none; overflow: hidden; border: 1px solid #ddd; border-radius: var(--r-m); background: #fff; }
+  .row { position: relative; flex: none; overflow: hidden; border: 1px solid #ddd; border-radius: var(--r-m); background: #fff; }
   .row.open { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 16rem; }
   .row.open, .row.over { border-color: #36c; }
   .row.over { background: #eef3ff; }
@@ -138,6 +164,12 @@
   /* The badge on the right sits level with the title, not in the middle of the two lines. */
   .kind, .standing { align-self: flex-start; margin-top: 1px; }
   .kind { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; color: #666; background: #f0f0ee; white-space: nowrap; border-radius: 999px; padding: 1px 9px; }
+  /* Small, right under the badge and flush right with it. */
+  .remove { position: absolute; right: 10px; top: 34px; display: flex; align-items: center; gap: 6px; font-size: 0.72rem; line-height: 1; }
+  .remove button { border: 0; background: none; padding: 3px; font: inherit; color: #aaa; cursor: pointer; }
+  .remove .trash:hover, .remove .yes { color: #c92a2a; }
+  .remove .no { color: #777; }
+  .ask { color: #777; }
   .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #3aa655; }
   .dot.incomplete { background: #e0b400; }
   .dot.invalid { background: #c92a2a; }
