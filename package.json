@@ -13,6 +13,7 @@
     "generate": "npm run generate --workspace core",
     "dev": "npm run dev --workspace app",
     "dev:worker": "npm run dev --workspace worker",
-    "build": "npm run build --workspace app"
+    "build": "npm run build --workspace app",
+    "deploy:staging": "npm run deploy:staging --workspace worker && npm run deploy:staging --workspace app"
   }
 }
