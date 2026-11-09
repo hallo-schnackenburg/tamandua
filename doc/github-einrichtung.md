@@ -26,7 +26,9 @@ Alles in der GitHub-Organisation bzw. dem Konto, dem das Daten-Repo gehört.
    meldet "Git Repository is empty" (409), sobald sie Änderungen sichern will. Die App kann das
    nicht selbst nachholen: Der Workflow liegt unter `.github/workflows/`, und dort dürfen
    GitHub Apps nur mit der Berechtigung "Workflows" schreiben, die wir bewusst nicht vergeben.
+
 3. Settings > General: "Automatically delete head branches" einschalten.
+
 4. Settings > Branches: Regel für `main`: "Require a pull request before merging" und
    "Require status checks to pass" mit dem Check `validate`.
 
