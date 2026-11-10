@@ -7,6 +7,9 @@
 //   POST /repo/rename      {session}  gives the open pull request the session's new name
 //   GET  /repo/pull/<n>    state of a pull request: open, closed, merged
 //   GET  /repo/erfassungen the sessions of everybody: the pull requests whose branch is erfassung/<login>/<slug>
+//   GET  /repo/objects     the objects of the archive (main): id, path and hash of each, and where to read their text (like below)
+//   GET  /repo/changes?since=<commit>  what changed on main since that commit: objects added, modified, removed (or
+//                          {reload: true} if that cannot be told: then everything is read again)
 //   GET  /repo/erfassung/<n>  one session's objects (path and what happened to it) and where to read their text:
 //                          the browser reads it itself, from raw.githubusercontent.com at the head commit; `files` is the
 //                          address of the bucket for the previews
@@ -16,7 +19,7 @@
 // claim to be. The check in the data repository's pull request is the one that counts.
 
 import { objectPath, parseObjectId } from '@tamandua/core/paths'
-import { GitHubError, Repo, type GithubEnv, type ListedPull } from './github.js'
+import { GitHubError, Repo, type ChangedFile, type GithubEnv, type ListedPull } from './github.js'
 import { objectUrl } from './s3.js'
 import { s3Config, type UploadEnv } from './upload.js'
 import type { Auth } from './session.js'
@@ -220,6 +223,44 @@ export function objectsOf(files: { filename: string; status: string }[]): Erfass
   return objects
 }
 
+/** An object of the archive (main): where its YAML is and the hash of that file (to tell whether it changed). */
+export interface ArchiveObject {
+  id: string
+  path: string
+  sha: string
+}
+
+export function archiveObjectsOf(files: { path: string; sha: string }[]): ArchiveObject[] {
+  const objects: ArchiveObject[] = []
+  for (const file of files) {
+    const match = OBJECT_FILE.exec(file.path)
+    if (match) objects.push({ id: match[1], path: file.path, sha: file.sha })
+  }
+  return objects
+}
+
+export interface ArchiveChange extends ArchiveObject {
+  status: 'added' | 'modified' | 'removed'
+}
+
+/** The changes of objects among the changed files. A renamed file is the removal of the old and the new one of the new path. */
+export function archiveChangesOf(files: ChangedFile[]): ArchiveChange[] {
+  const changes: ArchiveChange[] = []
+  for (const file of files) {
+    if (file.status === 'renamed' && file.previous_filename) {
+      const old = OBJECT_FILE.exec(file.previous_filename)
+      if (old) changes.push({ id: old[1], path: file.previous_filename, sha: file.sha, status: 'removed' })
+    }
+    const match = OBJECT_FILE.exec(file.filename)
+    if (!match) continue
+    changes.push({ id: match[1], path: file.filename, sha: file.sha, status: file.status === 'removed' ? 'removed' : file.status === 'added' || file.status === 'renamed' ? 'added' : 'modified' })
+  }
+  return changes
+}
+
+/** A commit as it is written into the address: letters and digits only (GitHub knows what is a commit). */
+const COMMIT = /^[0-9A-Za-z]{1,64}$/
+
 export interface RepoEnv extends GithubEnv, UploadEnv {}
 
 export async function handleRepo(request: Request, route: string, user: Auth, env: RepoEnv, fetchFn: typeof fetch): Promise<Response | null> {
@@ -279,6 +320,19 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
     if (match && request.method === 'GET') return json(await repo.pull(Number(match[1])))
 
     if (route === '/repo/erfassungen' && request.method === 'GET') return json({ erfassungen: erfassungenOf(await repo.pulls()) })
+
+    if (route === '/repo/objects' && request.method === 'GET') {
+      const { head, files } = await repo.tree()
+      return json({ head, raw: `https://raw.githubusercontent.com/${env.DATA_REPO}/${head}`, objects: archiveObjectsOf(files) })
+    }
+
+    if (route === '/repo/changes' && request.method === 'GET') {
+      const since = new URL(request.url).searchParams.get('since') ?? ''
+      if (!COMMIT.test(since)) return json({ error: '"since" must be a commit.' }, 400)
+      const found = await repo.changes(since)
+      if (!found) return json({ reload: true })
+      return json({ head: found.head, raw: `https://raw.githubusercontent.com/${env.DATA_REPO}/${found.head}`, changes: archiveChangesOf(found.files) })
+    }
 
     const one = /^\/repo\/erfassung\/(\d{1,9})$/.exec(route)
     if (one && request.method === 'GET') {

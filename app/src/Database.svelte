@@ -1,0 +1,146 @@
+<script lang="ts">
+  import { readValue } from '@tamandua/core'
+  import type { ArchiveDb, Entry } from './database.svelte.js'
+  import { ENTITY_NAMES, EXTERNAL_NAMES, FIELD_NAMES, objectLabel } from './labels.js'
+
+  // The database: the objects that are already in the archive. The list with its search is on the left,
+  // the chosen object on the right, as plain text (reading only).
+  let { archive }: { archive: ArchiveDb } = $props()
+
+  type Data = Record<string, unknown>
+  const isData = (value: unknown): value is Data => typeof value === 'object' && value !== null && !Array.isArray(value)
+  const text = (value: unknown): string => (typeof value === 'string' || typeof value === 'number' ? String(value) : '')
+
+  /** A person, place, business ...: "Karl Lemke (Person), Schnackenburg, Fotograf". */
+  function entity(value: unknown): string {
+    if (!isData(value)) return text(value)
+    const kind = text(value.type)
+    const head = `${text(value.name)}${kind ? ` (${ENTITY_NAMES[kind] ?? kind})` : ''}`
+    return [head, text(value.location), text(value.note)].filter(Boolean).join(', ')
+  }
+
+  function place(value: unknown): string {
+    if (!isData(value)) return text(value)
+    const kind = text(value.type)
+    return [
+      [text(value.site), kind && `(${EXTERNAL_NAMES[kind] ?? kind})`].filter(Boolean).join(' '),
+      text(value.reference),
+      text(value.uri),
+      text(value.note),
+      value.retrieved ? `gesehen am ${text(value.retrieved)}` : '',
+    ]
+      .filter(Boolean)
+      .join(', ')
+  }
+
+  /** The fields of an object as labelled lines; a list has one line per item. */
+  function lines(entry: Entry): { label: string; values: string[] }[] {
+    const get = (key: string) => readValue(entry.text, key)
+    const list = (key: string, one: (item: unknown) => string) => {
+      const value = get(key)
+      return (Array.isArray(value) ? value : value === undefined ? [] : [value]).map(one).filter(Boolean)
+    }
+    const geo = get('geocode')
+    const files = get('files')
+    const count = Array.isArray(files) ? files.length : 0
+    const rows: { label: string; values: string[] }[] = [
+      { label: FIELD_NAMES.title, values: [entry.title] },
+      { label: 'Art', values: [objectLabel(entry.type, entry.subtype)] },
+      { label: FIELD_NAMES.description, values: list('description', text) },
+      { label: FIELD_NAMES.date, values: list('date', text) },
+      { label: FIELD_NAMES.location, values: list('location', text) },
+      { label: FIELD_NAMES.geocode, values: isData(geo) ? [`${text(geo.lat)}, ${text(geo.lon)}${geo.precision ? ` (${text(geo.precision)})` : ''}`] : [] },
+      { label: FIELD_NAMES.origin, values: list('origin', entity) },
+      { label: FIELD_NAMES.recipient, values: list('recipient', text) },
+      { label: FIELD_NAMES.language, values: list('language', text) },
+      { label: FIELD_NAMES.holder, values: list('holder', entity) },
+      { label: FIELD_NAMES.owner, values: list('owner', entity) },
+      { label: FIELD_NAMES.subjects, values: list('subjects', entity) },
+      { label: FIELD_NAMES.storage, values: [entry.external ? 'extern, nicht in unserem Speicher' : 'hier'] },
+      { label: FIELD_NAMES.external, values: list('external', place) },
+      { label: 'Dateien', values: count > 0 ? [`${count} ${count === 1 ? 'Datei' : 'Dateien'}`] : [] },
+      { label: FIELD_NAMES.notes, values: list('notes', text) },
+      { label: 'ID', values: [entry.id] },
+    ]
+    return rows.filter((row) => row.values.length > 0)
+  }
+
+  const selected = $derived(archive.selected)
+  const shown = $derived(archive.shown)
+</script>
+
+<div class="database">
+  <section class="pane list-pane">
+    <h2>
+      Objekte
+      <span class="count">{archive.state === 'ready' ? (archive.query ? `${shown.length} von ${archive.entries.length}` : archive.entries.length) : ''}</span>
+      <button class="reload" title="Neu laden" aria-label="Neu laden" disabled={archive.syncing} onclick={() => archive.refresh(true)}>↻</button>
+    </h2>
+    <input class="search" type="search" placeholder="Titel suchen" bind:value={archive.query} aria-label="Titel suchen" />
+    {#if archive.stale && archive.state === 'ready'}
+      <p class="problem small">Keine Verbindung zum Archiv. Du siehst den zuletzt geladenen Stand.</p>
+    {/if}
+    {#if archive.state === 'failed'}
+      <p class="problem">Die Datenbank konnte nicht gelesen werden: {archive.error}</p>
+    {:else if archive.state !== 'ready'}
+      <p class="quiet">Wird geladen …</p>
+    {:else if archive.entries.length === 0}
+      <p class="quiet">Im Archiv ist noch kein Objekt.</p>
+    {:else if shown.length === 0}
+      <p class="quiet">Nichts gefunden.</p>
+    {:else}
+      <ul class="list">
+        {#each shown as entry (entry.id)}
+          <li>
+            <button class="row" class:current={entry.id === archive.selectedId} onclick={() => (archive.selectedId = entry.id)}>
+              <span class="title" class:empty={!entry.title}>{entry.title || 'Ohne Titel'}</span>
+              <span class="sub">{[objectLabel(entry.type, entry.subtype), entry.date, entry.external && `extern${entry.place ? `: ${entry.place}` : ''}`].filter(Boolean).join(' · ')}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+
+  <section class="pane detail">
+    {#if selected}
+      <dl>
+        {#each lines(selected) as row (row.label)}
+          <dt>{row.label}</dt>
+          <dd>
+            {#each row.values as value, i (i)}<div>{value}</div>{/each}
+          </dd>
+        {/each}
+      </dl>
+    {:else}
+      <p class="quiet center">Wähle links ein Objekt.</p>
+    {/if}
+  </section>
+</div>
+
+<style>
+  .database { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; min-height: 0; }
+  .pane { display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: var(--r-m); padding: 12px; }
+  h2 { display: flex; align-items: center; gap: 8px; height: 1.6rem; margin: 0 0 8px; font-size: 1rem; }
+  .count { font-size: 0.75rem; font-weight: 400; color: #888; }
+  .reload { margin-left: auto; width: 1.6rem; height: 1.6rem; padding: 0; border: 0; border-radius: 50%; background: none; color: #36c; font-size: 1.1rem; cursor: pointer; }
+  .reload:hover:not(:disabled) { background: #eef2fb; }
+  .reload:disabled { opacity: 0.4; cursor: default; }
+  .search { font: inherit; font-size: 0.9rem; height: 2rem; box-sizing: border-box; padding: 0 12px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 999px; }
+  .search:focus { outline: none; border-color: #36c; }
+  .list { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+  .row { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 9px 12px; text-align: left; font: inherit; background: #fff; border: 1px solid #ddd; border-radius: var(--r-m); cursor: pointer; }
+  .row:hover { border-color: #b9c8ee; }
+  .row.current { border-color: #36c; background: #eef3ff; }
+  .title { font-size: 0.85rem; line-height: 1.3; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .title.empty { font-weight: 400; color: #999; }
+  .sub { font-size: 0.75rem; line-height: 1.3; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .quiet { margin: 0; color: #aaa; font-size: 0.9rem; }
+  .quiet.center { margin: auto; }
+  .problem { margin: 0; color: #a11; font-size: 0.9rem; }
+  .problem.small { margin-bottom: 8px; font-size: 0.78rem; }
+  .detail { overflow: auto; }
+  dl { margin: 0; display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 8px 16px; font-size: 0.9rem; line-height: 1.4; }
+  dt { color: #888; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+</style>

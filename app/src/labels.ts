@@ -9,6 +9,7 @@ export const SUBTYPE_NAMES: Record<string, string> = {
   letter: 'Brief',
   protocol: 'Protokoll',
   note: 'Notiz',
+  brochure: 'Broschüre',
 }
 
 export const TYPE_NAMES: Record<string, string> = { image: 'Bild', document: 'Dokument' }
@@ -29,6 +30,31 @@ export const FIELD_NAMES: Record<string, string> = {
   language: 'Sprache',
   storage: 'Ablage',
   external: 'Externe Fundstelle',
+}
+
+export const ENTITY_NAMES: Record<string, string> = {
+  person: 'Person',
+  place: 'Ort',
+  building: 'Gebäude',
+  business: 'Betrieb',
+  event: 'Ereignis',
+  thing: 'Sache',
+}
+
+export const EXTERNAL_NAMES: Record<string, string> = { archive: 'Archiv', platform: 'Plattform', website: 'Webseite' }
+
+/** Where an object that lives elsewhere can be found: the name of the first place, else its host. */
+export function placeOf(list: unknown): string {
+  const first = Array.isArray(list) ? (list[0] as { site?: unknown; uri?: unknown } | null) : undefined
+  if (typeof first?.site === 'string' && first.site) return first.site
+  if (typeof first?.uri === 'string') {
+    try {
+      return new URL(first.uri).hostname.replace(/^www\./, '')
+    } catch {
+      return ''
+    }
+  }
+  return ''
 }
 
 /** "Brief" for a letter, "Bild" for an image without subtype. */

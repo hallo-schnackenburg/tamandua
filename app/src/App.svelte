@@ -5,6 +5,7 @@
   import Objects from './Objects.svelte'
   import Sessions from './Sessions.svelte'
   import Database from './Database.svelte'
+  import { ArchiveDb } from './database.svelte.js'
   import { FakeAgent } from './agent.js'
   import { WorkerAgent } from './worker-agent.js'
   import { FakeStore, S3Store } from './uploader.js'
@@ -15,11 +16,16 @@
   // All state lives in the workspace; this component only arranges the panes.
   // With a Worker the app is real: the model answers and files go to the bucket. Without one, stand-ins.
   const workerUrl = import.meta.env.VITE_WORKER_URL
-  const ws = new Workspace(
-    workerUrl ? new S3Store(workerUrl) : new FakeStore(),
-    workerUrl ? new WorkerAgent(workerUrl) : new FakeAgent(),
-    workerUrl ? new HttpBackend(workerUrl) : new FakeBackend(),
-  )
+  const backend = workerUrl ? new HttpBackend(workerUrl) : new FakeBackend()
+  const ws = new Workspace(workerUrl ? new S3Store(workerUrl) : new FakeStore(), workerUrl ? new WorkerAgent(workerUrl) : new FakeAgent(), backend)
+  const archive = new ArchiveDb(backend.archive)
+
+  // The copy of the archive in the browser is kept up to date for as long as somebody is signed in.
+  $effect(() => {
+    if (ws.login.state !== 'user') return
+    void archive.start()
+    return () => archive.stop()
+  })
 
   // The tabs separate the UI concepts: capturing (the three panes) and the database. Only a convenience of this browser.
   type Tab = 'capture' | 'database'
@@ -199,7 +205,7 @@
         <Objects workspace={ws} />
       </section>
     </div>
-    {#if tab === 'database'}<Database />{/if}
+    {#if tab === 'database'}<Database {archive} />{/if}
   {:else if ws.login.state === 'loading'}
     <div class="welcome"><p class="quiet">Einen Moment …</p></div>
   {:else}
@@ -222,10 +228,10 @@
 <style>
   main { display: flex; flex-direction: column; gap: 12px; height: 100%; padding: 12px; }
   /* A raised white bar: the session is the center of it, its state or the way forward stands right next to it. */
-  header { position: relative; display: flex; align-items: center; gap: 12px; font-size: 0.9rem; padding: 8px 14px 8px 84px; background: #fff; border-radius: var(--r-l); box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 14px rgb(0 0 0 / 0.05); }
+  header { position: relative; display: flex; align-items: center; gap: 12px; font-size: 0.9rem; min-height: calc(2.3rem + 16px); padding: 8px 14px 8px 84px; background: #fff; border-radius: var(--r-l); box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 14px rgb(0 0 0 / 0.05); }
   .spacer { flex: 1; }
-  /* One pill with a state per view, like the session pill: the active one is raised and blue. */
-  .tabs { display: inline-flex; align-items: center; gap: 2px; height: 2.3rem; box-sizing: border-box; padding: 3px; border-radius: 999px; background: #f0f0ee; }
+  /* Centered in the bar. One pill with a state per view, like the session pill: the active one is raised and blue. */
+  .tabs { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 2px; height: 2.3rem; box-sizing: border-box; padding: 3px; border-radius: 999px; background: #f0f0ee; }
   .tabs button { height: 100%; padding: 0 16px; border: 1px solid transparent; border-radius: 999px; background: none; color: #666; font-weight: 600; }
   .tabs button:hover:not(.active) { color: #36c; }
   .tabs button.active { background: #fff; border-color: #ddd; color: #36c; cursor: default; box-shadow: 0 1px 2px rgb(0 0 0 / 0.06); }

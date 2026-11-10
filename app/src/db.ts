@@ -2,6 +2,7 @@
 // nothing: the files that were dropped (hash, name, preview, upload state) and the
 // objects (YAML text). The original files themselves are not kept.
 
+import type { MirrorRecord } from './archive-mirror.js'
 import type { ChatMessage, FileRecord, ObjectRecord, Session } from './workspace.svelte.js'
 
 const DB_NAME = 'tamandua'
@@ -9,13 +10,14 @@ const FILES = 'files'
 const OBJECTS = 'objects'
 const CHAT = 'chat' // one record, {id: 'log', messages: [...]}
 const SESSIONS = 'sessions'
+const ARCHIVE = 'archive' // the copy of the archive: one record per object file, key: its path in the repository
 const META = 'meta' // what the user was looking at, one record {id: 'ui', ...}
 
 let opened: Promise<IDBDatabase> | undefined
 
 function database(): Promise<IDBDatabase> {
   opened ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 5)
+    const request = indexedDB.open(DB_NAME, 6)
     request.onupgradeneeded = () => {
       const db = request.result
       if (db.objectStoreNames.contains('drafts')) db.deleteObjectStore('drafts') // version 1, dropped
@@ -24,6 +26,7 @@ function database(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(CHAT)) db.createObjectStore(CHAT, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(SESSIONS)) db.createObjectStore(SESSIONS, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: 'id' })
+      if (!db.objectStoreNames.contains(ARCHIVE)) db.createObjectStore(ARCHIVE, { keyPath: 'path' })
     }
     request.onsuccess = () => {
       const db = request.result
@@ -114,6 +117,30 @@ export async function loadUi(): Promise<UiState | undefined> {
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
   })
+}
+
+/** The copy of the archive: what was kept, and the commit of main it is equal to (recorded in the same step as the records). */
+export async function loadArchive(): Promise<{ synced?: string; records: MirrorRecord[] }> {
+  const records = await readAll<MirrorRecord>(ARCHIVE)
+  const db = await database()
+  const meta = await new Promise<{ synced?: string } | undefined>((resolve, reject) => {
+    const request = db.transaction(META, 'readonly').objectStore(META).get('archive')
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+  return { synced: meta?.synced, records }
+}
+
+/** Writes and removes records of the archive's copy and sets its commit, all or nothing. */
+export async function saveArchive(synced: string, put: MirrorRecord[], remove: string[], everything = false): Promise<void> {
+  const db = await database()
+  const transaction = db.transaction([ARCHIVE, META], 'readwrite')
+  const store = transaction.objectStore(ARCHIVE)
+  if (everything) store.clear()
+  for (const path of remove) store.delete(path)
+  for (const record of put) store.put({ ...record })
+  transaction.objectStore(META).put({ id: 'archive', synced })
+  await done(transaction)
 }
 
 export const loadFiles = () => readAll<FileRecord>(FILES)

@@ -7,7 +7,8 @@
     "build": "vite build",
     "deploy:staging": "vite build --mode staging && cp wrangler.staging.toml wrangler.toml && wrangler pages deploy dist --project-name tamandua-staging; rm -f wrangler.toml",
     "deploy:production": "vite build --mode production && cp wrangler.production.toml wrangler.toml && wrangler pages deploy dist --project-name tamandua-production; rm -f wrangler.toml",
-    "typecheck": "svelte-check --tsconfig ./tsconfig.json"
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tamandua/core": "*",
@@ -24,6 +25,7 @@
     "svelte": "^5.57.3",
     "svelte-check": "^4.7.8",
     "typescript": "^5.9.0",
-    "vite": "^8.3.6"
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
   }
 }

@@ -148,6 +148,16 @@ export interface ListedPull {
   head: { ref: string; sha: string }
 }
 
+/** The compare API shows at most 300 files. */
+const MAX_CHANGE_PAGES = 3
+
+export interface ChangedFile {
+  filename: string
+  status: string
+  sha: string
+  previous_filename?: string
+}
+
 /** 100 files a page; a session holds a few dozen objects, so this is far more than needed. */
 const MAX_FILE_PAGES = 10
 
@@ -304,6 +314,43 @@ export class Repo {
       if (batch.length < 100) break
     }
     return { head: data.head.sha, files }
+  }
+
+  /** The newest commit of the base branch and everything in it, with the hash of each file (the caller picks the object files). */
+  async tree(): Promise<{ head: string; files: { path: string; sha: string }[] }> {
+    const head = await this.head(this.base)
+    if (!head) throw new GitHubError(`The branch ${this.base} does not exist.`, 404)
+    const commit = await this.call<{ tree: { sha: string } }>('GET', `/git/commits/${head}`)
+    const tree = await this.call<{ tree: { path: string; type: string; sha: string }[]; truncated?: boolean }>('GET', `/git/trees/${commit.tree.sha}?recursive=1`)
+    if (tree.truncated) throw new GitHubError('The repository is too large to be listed at once.', 502)
+    return { head, files: tree.tree.filter((entry) => entry.type === 'blob').map((entry) => ({ path: entry.path, sha: entry.sha })) }
+  }
+
+  /**
+   * What changed on the base branch since a commit: its newest commit and the files that differ. Returns null if
+   * that cannot be told (the commit is not known, the branch was rewritten, or there are too many changes): then
+   * the caller has to read everything again.
+   */
+  async changes(since: string): Promise<{ head: string; files: ChangedFile[] } | null> {
+    const head = await this.head(this.base)
+    if (!head) throw new GitHubError(`The branch ${this.base} does not exist.`, 404)
+    if (head === since) return { head, files: [] }
+    const files: ChangedFile[] = []
+    for (let page = 1; page <= MAX_CHANGE_PAGES; page++) {
+      let data: { status: string; files?: ChangedFile[] }
+      try {
+        data = await this.call('GET', `/compare/${since}...${head}?per_page=100&page=${page}`)
+      } catch (error) {
+        if (error instanceof GitHubError && (error.status === 404 || error.status === 422)) return null
+        throw error
+      }
+      // "behind" or "diverged": the branch no longer continues from that commit.
+      if (data.status !== 'ahead' && data.status !== 'identical') return null
+      const batch = data.files ?? []
+      files.push(...batch)
+      if (batch.length < 100) return { head, files }
+    }
+    return null // GitHub lists at most 300 files: more than that is read anew
   }
 
   async pull(number: number): Promise<Pull> {

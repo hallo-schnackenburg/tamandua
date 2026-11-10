@@ -2,7 +2,7 @@
   import { locate, readField, readValue, validateObjectYaml } from '@tamandua/core'
   import type { Diagnostic } from '@codemirror/lint'
   import Editor from './Editor.svelte'
-  import { objectLabel } from './labels.js'
+  import { objectLabel, placeOf } from './labels.js'
   import { validityOf } from './validity.js'
   import type { ObjectRecord, Workspace } from './workspace.svelte.js'
 
@@ -32,20 +32,6 @@
   )
 
   // Selected files without an object: a row "new object" stands in for it, below the others.
-
-  // Where an object that lives elsewhere can be found: the name of the first place, else its host.
-  function placeOf(list: unknown): string {
-    const first = Array.isArray(list) ? (list[0] as { site?: unknown; uri?: unknown } | null) : undefined
-    if (typeof first?.site === 'string' && first.site) return first.site
-    if (typeof first?.uri === 'string') {
-      try {
-        return new URL(first.uri).hostname.replace(/^www\./, '')
-      } catch {
-        return ''
-      }
-    }
-    return ''
-  }
 
   // What a closed row shows.
   function summary(object: ObjectRecord) {

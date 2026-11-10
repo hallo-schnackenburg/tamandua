@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { handle, type Env } from '../src/index.js'
 import { bodyOf, branchOf, erfassungenOf, markerOf, messageOf, parseSessionRef, titleOf } from '../src/repo.js'
-import { authEnv, cookieOf, fakeGitHub } from './support.js'
+import { authEnv, blobSha, cookieOf, fakeGitHub } from './support.js'
 
 const env: Env = { ...authEnv }
 const cookie = await cookieOf()
@@ -390,5 +390,82 @@ describe('GET /repo/erfassungen and /repo/erfassung/<n>', () => {
     gh = fakeGitHub()
     expect((await handle(new Request('http://worker/api/repo/erfassungen'), env, gh.fn)).status).toBe(401)
     expect((await get('/repo/erfassung/999')).status).toBe(502)
+  })
+})
+
+describe('GET /repo/objects', () => {
+  it('lists the object files of main, and where their text can be read', async () => {
+    const gh = fakeGitHub()
+    const saved = (await (await saveOf(gh, objects(ID_A, ID_B))).json()) as { commit: string }
+    // Nothing is in the archive until the session is merged.
+    const empty = await handle(new Request('http://worker/api/repo/objects', { headers: { cookie } }), env, gh.fn)
+    expect(((await empty.json()) as { objects: unknown[] }).objects).toEqual([])
+
+    gh.state.refs.main = saved.commit // merged
+    const response = await handle(new Request('http://worker/api/repo/objects', { headers: { cookie } }), env, gh.fn)
+    expect(response.status).toBe(200)
+    const data = (await response.json()) as { head: string; raw: string; objects: { id: string; path: string }[] }
+    expect(data.head).toBe(saved.commit)
+    expect(data.raw).toBe(`https://raw.githubusercontent.com/verein/archiv-data/${saved.commit}`)
+    expect(data.objects).toEqual([
+      { id: ID_A, path: `objects/HJ/${ID_A}.yaml`, sha: blobSha(text(ID_A)) },
+      { id: ID_B, path: `objects/HJ/${ID_B}.yaml`, sha: blobSha(text(ID_B)) },
+    ])
+  })
+
+  it('is for signed-in people only', async () => {
+    const gh = fakeGitHub()
+    expect((await handle(new Request('http://worker/api/repo/objects'), env, gh.fn)).status).toBe(401)
+  })
+})
+
+describe('GET /repo/changes', () => {
+  const changes = (gh: ReturnType<typeof fakeGitHub>, since: string) => handle(new Request(`http://worker/api/repo/changes?since=${since}`, { headers: { cookie } }), env, gh.fn)
+  const merge = async (gh: ReturnType<typeof fakeGitHub>, data: unknown) => {
+    const saved = (await (await saveOf(gh, data)).json()) as { commit: string }
+    gh.state.refs.main = saved.commit
+    return saved.commit
+  }
+
+  it('tells which objects were added, changed and removed since a commit', async () => {
+    const gh = fakeGitHub()
+    const first = await merge(gh, objects(ID_A))
+    const second = await merge(gh, { session, objects: [{ id: ID_B, text: text(ID_B) }, { id: ID_A, text: text(ID_A, 'Anderer Titel'), change: 'changed' }] })
+    const response = await changes(gh, first)
+    expect(response.status).toBe(200)
+    const data = (await response.json()) as { head: string; raw: string; changes: unknown[] }
+    expect(data.head).toBe(second)
+    expect(data.raw).toBe(`https://raw.githubusercontent.com/verein/archiv-data/${second}`)
+    expect(data.changes).toEqual([
+      { id: ID_A, path: `objects/HJ/${ID_A}.yaml`, sha: blobSha(text(ID_A, 'Anderer Titel')), status: 'modified' },
+      { id: ID_B, path: `objects/HJ/${ID_B}.yaml`, sha: blobSha(text(ID_B)), status: 'added' },
+    ])
+
+    const third = await merge(gh, { session, deleted: [ID_A] })
+    const removed = (await (await changes(gh, second)).json()) as { head: string; changes: { id: string; status: string }[] }
+    expect(removed.head).toBe(third)
+    expect(removed.changes.map((c) => [c.id, c.status])).toEqual([[ID_A, 'removed']])
+  })
+
+  it('has nothing to tell when nothing changed', async () => {
+    const gh = fakeGitHub()
+    const head = await merge(gh, objects(ID_A))
+    expect(await (await changes(gh, head)).json()).toMatchObject({ head, changes: [] })
+  })
+
+  it('asks to read everything again when the commit is not known or the branch was rewritten', async () => {
+    const gh = fakeGitHub()
+    const first = await merge(gh, objects(ID_A))
+    expect(await (await changes(gh, 'unknown')).json()).toEqual({ reload: true })
+    gh.state.refs.main = 'c0' // rewritten: the old head is no ancestor any more
+    gh.state.commits.cx = { tree: 't0', parents: [], message: 'rewritten' }
+    gh.state.refs.main = 'cx'
+    expect(await (await changes(gh, first)).json()).toEqual({ reload: true })
+  })
+
+  it('refuses a "since" that is no commit, and signed-out people', async () => {
+    const gh = fakeGitHub()
+    expect((await changes(gh, '..%2F..')).status).toBe(400)
+    expect((await handle(new Request('http://worker/api/repo/changes?since=c0'), env, gh.fn)).status).toBe(401)
   })
 })

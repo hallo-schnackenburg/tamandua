@@ -3,6 +3,7 @@
 // interface. HttpBackend is the real one; FakeBackend stands in without a Worker.
 
 import { jsonOf, request, SignedOut } from './api.js'
+import type { MirrorBackend } from './archive-mirror.js'
 
 export interface User {
   login: string
@@ -87,6 +88,8 @@ export interface Backend {
   erfassungen(): Promise<RemoteErfassung[]>
   /** The objects of one session, with their text. */
   erfassung(number: number): Promise<RemoteContent>
+  /** What the copy of the archive needs from the repository (see archive-mirror.ts). */
+  readonly archive: MirrorBackend
   /** A file from the bucket (a preview), or undefined if it cannot be had. */
   fetchFile(base: string, path: string): Promise<Blob | undefined>
   logout(): Promise<void>
@@ -97,6 +100,22 @@ export interface Backend {
 const MAX_PER_SAVE = 50
 /** How many objects are read from GitHub at once. */
 const READ_PARALLEL = 6
+
+/** The texts are read from GitHub directly, at a commit: a public address that never changes its content. */
+async function readTexts(raw: string, wanted: { id: string; path: string }[]): Promise<{ id: string; text: string }[]> {
+  const objects: { id: string; text: string }[] = []
+  let next = 0
+  const worker = async () => {
+    while (next < wanted.length) {
+      const object = wanted[next++]
+      const text = await fetch(`${raw}/${object.path}`)
+      if (!text.ok) throw new Error(`Objekt ${object.id} konnte nicht gelesen werden (${text.status}).`)
+      objects.push({ id: object.id, text: await text.text() })
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(READ_PARALLEL, wanted.length) }, worker))
+  return objects.sort((a, b) => a.id.localeCompare(b.id))
+}
 
 export class HttpBackend implements Backend {
   #url: string
@@ -172,20 +191,23 @@ export class HttpBackend implements Backend {
     const response = await request(`${this.#url}/repo/erfassung/${number}`)
     const data = await jsonOf<{ head: string; raw: string; files?: string; objects: { id: string; path: string; status: string }[] }>(response)
     if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
-    // The texts are read from GitHub directly, at the commit: a public address that never changes its content.
-    const wanted = data.objects.filter((o) => o.status !== 'removed')
-    const objects: { id: string; text: string }[] = []
-    let next = 0
-    const worker = async () => {
-      while (next < wanted.length) {
-        const object = wanted[next++]
-        const text = await fetch(`${data.raw}/${object.path}`)
-        if (!text.ok) throw new Error(`Objekt ${object.id} konnte nicht gelesen werden (${text.status}).`)
-        objects.push({ id: object.id, text: await text.text() })
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(READ_PARALLEL, wanted.length) }, worker))
-    return { head: data.head, files: data.files, objects: objects.sort((a, b) => a.id.localeCompare(b.id)) }
+    return { head: data.head, files: data.files, objects: await readTexts(data.raw, data.objects.filter((o) => o.status !== 'removed')) }
+  }
+
+  readonly archive: MirrorBackend = {
+    tree: async () => {
+      const response = await request(`${this.#url}/repo/objects`)
+      const data = await jsonOf<Awaited<ReturnType<MirrorBackend['tree']>>>(response)
+      if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+      return data
+    },
+    changes: async (since) => {
+      const response = await request(`${this.#url}/repo/changes?since=${encodeURIComponent(since)}`)
+      const data = await jsonOf<Awaited<ReturnType<MirrorBackend['changes']>>>(response)
+      if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+      return data
+    },
+    texts: readTexts,
   }
 
   async fetchFile(base: string, path: string): Promise<Blob | undefined> {
@@ -282,6 +304,13 @@ export class FakeBackend implements Backend {
     const slug = [...this.branches.keys()].find((s) => this.#pullOf(s).number === number)
     const branch = slug ? this.branches.get(slug) : undefined
     return { head: 'fake', objects: [...(branch ?? [])].map(([id, text]) => ({ id, text })).sort((a, b) => a.id.localeCompare(b.id)) }
+  }
+
+  /** Without a Worker the archive is empty. */
+  readonly archive: MirrorBackend = {
+    tree: async () => ({ head: 'fake', raw: 'fake', objects: [] }),
+    changes: async () => ({ head: 'fake', raw: 'fake', changes: [] }),
+    texts: async () => [],
   }
 
   async fetchFile(): Promise<Blob | undefined> {

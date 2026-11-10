@@ -29,6 +29,13 @@ export async function cookieOf(session: Auth = anna): Promise<string> {
   return `${SESSION_COOKIE}=${await seal(session, SECRET)}`
 }
 
+/** A stand-in for the hash GitHub gives a file: the same text, the same hash. */
+export const blobSha = (content: string): string => {
+  let h = 0
+  for (const c of content) h = (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0
+  return `b${h.toString(16)}`
+}
+
 export interface Call {
   method: string
   url: string
@@ -84,6 +91,30 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
 
     let m: RegExpExecArray | null
     if ((m = /^\/git\/ref\/heads\/(.+)$/.exec(path))) return m[1] in state.refs ? reply({ object: { sha: state.refs[m[1]] } }) : reply({ message: 'Not Found' }, 404)
+    if ((m = /^\/git\/trees\/([^/]+)$/.exec(path)) && method === 'GET') {
+      const tree = state.trees[m[1]]
+      return reply({ tree: [...(tree?.paths ?? [])].map((p) => ({ path: p, type: 'blob', sha: blobSha(tree.files.get(p) ?? '') })), truncated: false })
+    }
+    if ((m = /^\/compare\/([^.]+)\.\.\.(.+)$/.exec(path)) && method === 'GET') {
+      const [, a, b] = m
+      if (!state.commits[a] || !state.commits[b]) return reply({ message: 'Not Found' }, 404)
+      // "ahead" if a is an ancestor of b (or the same), else the branch was rewritten.
+      let ancestor = false
+      for (let c: string[] = [b]; c.length > 0; ) {
+        const next = c.pop()!
+        if (next === a) ancestor = true
+        c.push(...(state.commits[next]?.parents ?? []))
+      }
+      if (!ancestor) return reply({ status: 'diverged', files: [] })
+      const from = state.trees[state.commits[a].tree]?.files ?? new Map<string, string>()
+      const to = state.trees[state.commits[b].tree]?.files ?? new Map<string, string>()
+      const files = [
+        ...[...to].filter(([name, content]) => from.get(name) !== content).map(([name, content]) => ({ filename: name, status: from.has(name) ? 'modified' : 'added', sha: blobSha(content) })),
+        ...[...from.keys()].filter((name) => !to.has(name)).map((name) => ({ filename: name, status: 'removed', sha: blobSha(from.get(name) ?? '') })),
+      ]
+      const page = Number(url.searchParams.get('page') ?? 1)
+      return reply({ status: files.length === 0 ? 'identical' : 'ahead', files: files.slice((page - 1) * 100, page * 100) })
+    }
     if ((m = /^\/contents\/(.+)$/.exec(path))) {
       const ref = url.searchParams.get('ref') ?? ''
       const tree = state.trees[state.commits[ref]?.tree]
