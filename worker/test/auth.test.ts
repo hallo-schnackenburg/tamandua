@@ -56,6 +56,15 @@ describe('sign-in', () => {
     expect(await me.json()).toEqual({ login: 'anna', name: 'Anna Beispiel', avatar: 'https://avatars.example/anna', role: 'write' })
   })
 
+  it('tells where the bucket\'s files can be read from, if there is a bucket', async () => {
+    const cookie = await cookieOf()
+    const storage = { ...env, S3_ENDPOINT: 'https://nbg1.your-objectstorage.com', S3_BUCKET: 'archiv', S3_ACCESS_KEY_ID: 'k', S3_SECRET_ACCESS_KEY: 's' }
+    const withBucket = await handle(get('/api/auth/me', cookie), storage, fakeGitHub().fn)
+    expect(((await withBucket.json()) as { files?: string }).files).toBe('https://archiv.nbg1.your-objectstorage.com')
+    const without = await handle(get('/api/auth/me', cookie), env, fakeGitHub().fn)
+    expect(((await without.json()) as { files?: string }).files).toBeUndefined()
+  })
+
   it('knows maintainers as reviewers', async () => {
     const gh = fakeGitHub({ permissions: { push: true, maintain: true } })
     const { to, waiting } = await startLogin(gh)

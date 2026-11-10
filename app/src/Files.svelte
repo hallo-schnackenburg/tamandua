@@ -1,7 +1,9 @@
 <script lang="ts">
   import { readField } from '@tamandua/core'
   import { objectLabel } from './labels.js'
+  import Lightbox from './Lightbox.svelte'
   import { validityOf } from './validity.js'
+  import { viewable } from './viewer.js'
   import type { FileRecord, Workspace } from './workspace.svelte.js'
 
   let { workspace: ws }: { workspace: Workspace } = $props()
@@ -18,6 +20,17 @@
     if (!url) urls.set(blob, (url = URL.createObjectURL(blob)))
     return url
   }
+
+  // --- the detail view ---
+  // It opens on a file and pages through the files of the same object (by name, as numbered scans come), or shows the one file alone.
+  let looking = $state<{ files: FileRecord[]; start: number }>()
+  function look(file: FileRecord) {
+    const group = file.objectId ? ws.files.filter((f) => f.objectId === file.objectId && viewable(f)) : []
+    const files = group.length > 0 ? group.sort((a, b) => a.name.localeCompare(b.name, 'de', { numeric: true })) : [file]
+    looking = { files, start: Math.max(0, files.indexOf(file)) }
+  }
+  // The button must not select the tile, start a move, or count as a click on the tile.
+  const alone = (event: Event) => event.stopPropagation()
 
   const extension = (name: string) => (name.split('.').pop() ?? '').toLowerCase()
 
@@ -207,6 +220,11 @@
             {:else}
               <span class="noimg">{extension(file.name)}</span>
             {/if}
+            {#if viewable(file)}
+              <button class="zoom" class:shifted={file.status !== 'uploaded'} title="Vergrößern" aria-label="{file.name} vergrößern" onpointerdown={alone} onclick={(event) => { event.stopPropagation(); look(file) }} onkeydown={alone} ondblclick={alone}>
+                <svg viewBox="0 0 20 20" width="12" height="12" aria-hidden="true"><path d="M11 4h5v5M9 16H4v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </button>
+            {/if}
             {#if file.status === 'uploading'}
               {@render badge('progress', file.progress ?? 0)}
             {:else if file.status === 'error' || file.status === 'conflict'}
@@ -236,6 +254,7 @@
       {/each}
     </div>
   {/if}
+  {#if looking}<Lightbox files={looking.files} start={looking.start} base={ws.filesBase} onclose={() => (looking = undefined)} />{/if}
   {#if over}<div class="overlay">Zum Hinzufügen loslassen</div>{/if}
   {#if ghost}
     <div class="tile ghost" style:left="{ghost.x}px" style:top="{ghost.y}px" style:width="{ghost.width}px" style:border-color={ghost.color ?? '#ccc'}>
@@ -282,5 +301,10 @@
   .badge { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06); font-size: 0.8rem; font-weight: 700; line-height: 1; pointer-events: none; }
   .badge.ok { color: #2b8a3e; }
   .badge.bad { background: #c92a2a; color: #fff; }
+  .zoom { position: absolute; top: 8px; right: 8px; z-index: 1; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: #fff; color: #555; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); cursor: pointer; opacity: 0; transition: opacity 0.12s; }
+  .zoom.shifted { right: 34px; }
+  .tile:hover .zoom, .zoom:focus-visible, .tile:focus-within .zoom { opacity: 1; }
+  @media (hover: none) { .zoom { opacity: 1; } }
+  .zoom:hover { background: #fff; color: #36c; }
   .state.bad { font-size: 0.72rem; line-height: 1.2; color: #c92a2a; }
 </style>

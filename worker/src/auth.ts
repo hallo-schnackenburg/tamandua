@@ -8,9 +8,11 @@
 // Who may use the tool is decided by GitHub: whoever has write access to the data repository.
 
 import { currentUser, exchangeCode, refreshTokens, repoRole, revoke, type GithubEnv, type Tokens } from './github.js'
+import { objectUrl } from './s3.js'
+import { s3Config, type UploadEnv } from './upload.js'
 import { LOGIN_COOKIE, SESSION_COOKIE, SESSION_DAYS, challengeOf, randomToken, readCookie, seal, setCookie, unseal, type Auth } from './session.js'
 
-export interface AuthEnv extends GithubEnv {
+export interface AuthEnv extends GithubEnv, UploadEnv {
   SESSION_SECRET?: string
   /** Where the app is reached from outside, e.g. https://tamandua.schnackenburg.de (no slash at the end). */
   APP_URL?: string
@@ -116,7 +118,9 @@ export async function handleAuth(request: Request, route: string, env: AuthEnv, 
     const signed = await readSession(request, env, fetchFn)
     if (!signed) return json({ error: 'Not signed in.' }, 401)
     const { login, name, avatar, role } = signed.session
-    const response = json({ login, name, avatar, role })
+    // Where the bucket's files can be read from (it is public): the browser shows previews and pictures from there.
+    const storage = s3Config(env)
+    const response = json({ login, name, avatar, role, files: storage ? objectUrl(storage, '').origin : undefined })
     if (signed.cookie) response.headers.append('set-cookie', signed.cookie)
     return response
   }

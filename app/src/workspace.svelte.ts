@@ -22,6 +22,8 @@ export interface FileRecord {
   /** The entry that goes into `files` of an object's YAML. */
   entry: FileEntry
   preview?: Blob
+  /** The picture for the detail view, kept until it is in the bucket (the detail view reads it from there afterwards). */
+  web?: Blob
   status: 'uploading' | 'uploaded' | 'conflict' | 'error'
   /** What to tell the user for a conflict or an error. */
   message?: string
@@ -730,7 +732,7 @@ export class Workspace {
     this.pending.push({ name: file.name, state: 'hashing', progress: 0 })
     const item = this.pending[this.pending.length - 1] // the reactive version
     try {
-      const { entry, preview } = await prepareFile(file, (fraction) => (item.progress = fraction))
+      const { entry, preview, web } = await prepareFile(file, (fraction) => (item.progress = fraction))
       const sha256 = entry.sha256 as string
       const existing = this.files.find((f) => f.sha256 === sha256)
       let record: FileRecord
@@ -742,10 +744,11 @@ export class Workspace {
           batch.elsewhere.push({ name: file.name, session: (owner && this.#sessionOf(owner)?.name) || 'einer anderen Erfassung' })
         }
       } else if (existing) {
+        existing.web = web
         void this.#upload(existing, file, batch) // try again after an error
         record = existing
       } else {
-        this.files.push({ sha256, name: file.name, bytes: file.size, entry, preview, status: 'uploading', addedAt: Date.now() })
+        this.files.push({ sha256, name: file.name, bytes: file.size, entry, preview, web, status: 'uploading', addedAt: Date.now() })
         record = this.files[this.files.length - 1]
         void this.#upload(record, file, batch)
       }
@@ -762,15 +765,21 @@ export class Workspace {
     this.#report(batch)
   }
 
+  /** Where the bucket's files can be read from (they are public), if the Worker knows. */
+  get filesBase(): string | undefined {
+    return this.login.state === 'user' ? this.login.user.files : undefined
+  }
+
   async #upload(record: FileRecord, file: File, batch: Batch) {
     record.status = 'uploading'
     record.message = undefined
     record.progress = 0
     this.#mark(record.sha256)
     try {
-      const result = await this.#store.upload(file, $state.snapshot(record.entry), (fraction) => (record.progress = fraction), record.preview)
+      const result = await this.#store.upload(file, $state.snapshot(record.entry), (fraction) => (record.progress = fraction), { preview: record.preview, web: record.web })
       record.status = result.status
       record.message = result.message
+      record.web = undefined // it is in the bucket now (or belongs to somebody else's file there)
     } catch (error) {
       record.status = 'error'
       record.message = (error as Error).message

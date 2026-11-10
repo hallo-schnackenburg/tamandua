@@ -13,10 +13,16 @@ export interface UploadResult {
 
 export interface FileStore {
   /**
-   * Claims the file and uploads it, with its preview if there is one. Throws an Error if
-   * the upload fails; trying again only sends what is still missing.
+   * Claims the file and uploads it, with its preview and its picture for the detail view if there are some. Throws an
+   * Error if the upload fails; trying again only sends what is still missing.
    */
-  upload(file: File, entry: FileEntry, onProgress: (fraction: number) => void, preview?: Blob): Promise<UploadResult>
+  upload(file: File, entry: FileEntry, onProgress: (fraction: number) => void, blobs?: Variants): Promise<UploadResult>
+}
+
+/** The pictures made from a file in the browser; the entry in the YAML names them either way. */
+export interface Variants {
+  preview?: Blob
+  web?: Blob
 }
 
 interface Part {
@@ -59,11 +65,14 @@ export class S3Store implements FileStore {
     this.#url = workerUrl.replace(/\/$/, '')
   }
 
-  async upload(file: File, entry: FileEntry, onProgress: (fraction: number) => void, preview?: Blob): Promise<UploadResult> {
+  async upload(file: File, entry: FileEntry, onProgress: (fraction: number) => void, blobs: Variants = {}): Promise<UploadResult> {
     const parts: Part[] = [{ path: entry.path as string, mime: entry.mime as string, body: file }]
-    // The preview is only uploaded if we still have it; the entry in the YAML names it either way.
-    const variant = ((entry.variants ?? []) as { kind: string; path: string; mime: string }[]).find((v) => v.kind === 'preview')
-    if (variant && preview) parts.push({ path: variant.path, mime: variant.mime, body: preview })
+    // A picture is only uploaded if we still have it; the entry in the YAML names it either way.
+    for (const kind of ['preview', 'web'] as const) {
+      const variant = ((entry.variants ?? []) as { kind: string; path: string; mime: string }[]).find((v) => v.kind === kind)
+      const body = blobs[kind]
+      if (variant && body) parts.push({ path: variant.path, mime: variant.mime, body })
+    }
 
     const answers = await this.#plan(parts)
     const missing = parts.filter((part) => answers.get(part.path)?.exists === false)
@@ -95,7 +104,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** Test stand-in. A file name containing "conflict" gives a conflict, one containing "fail" a failure. */
 export class FakeStore implements FileStore {
-  async upload(file: File, _entry: FileEntry, onProgress: (fraction: number) => void, _preview?: Blob): Promise<UploadResult> {
+  async upload(file: File, _entry: FileEntry, onProgress: (fraction: number) => void, _blobs?: Variants): Promise<UploadResult> {
     for (let step = 1; step <= 10; step++) {
       await sleep(80)
       onProgress(step / 10)

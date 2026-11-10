@@ -10,6 +10,8 @@ export interface User {
   avatar: string
   /** `admin` may also review and merge. */
   role: 'admin' | 'write'
+  /** The address the bucket's files (previews, pictures) are read from; none if the Worker has no bucket. */
+  files?: string
 }
 
 export interface Pull {
