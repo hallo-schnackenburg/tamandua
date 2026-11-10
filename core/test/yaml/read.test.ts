@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readField, readValue, stripFiles } from '../../src/yaml/read.js'
+import { readField, readObject, readValue, stripFiles } from '../../src/yaml/read.js'
 
 describe('readField', () => {
   it('reads a text field', () => expect(readField('title: Hallo\n', 'title')).toBe('Hallo'))
@@ -29,5 +29,16 @@ describe('readValue', () => {
   it('gives undefined for a missing field or broken YAML', () => {
     expect(readValue('title: A\n', 'origin')).toBeUndefined()
     expect(readValue('title: [x', 'title')).toBeUndefined()
+  })
+})
+
+describe('readObject', () => {
+  it('gives the whole object as plain data', () => {
+    expect(readObject('title: A\nfiles:\n  - role: main\n')).toEqual({ title: 'A', files: [{ role: 'main' }] })
+  })
+  it('gives undefined for what is not an object or not YAML', () => {
+    expect(readObject('- a\n- b\n')).toBeUndefined()
+    expect(readObject('just text')).toBeUndefined()
+    expect(readObject(': : [')).toBeUndefined()
   })
 })

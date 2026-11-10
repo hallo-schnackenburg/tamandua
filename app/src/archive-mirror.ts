@@ -11,13 +11,25 @@ export interface MirrorRecord {
   /** The hash GitHub has for the file: equal hash, equal text. */
   sha: string
   text: string
+  /** The text, parsed once when it was read (so that the browser does not have to parse it again and again). Derived, not part of the repository. */
+  data?: Record<string, unknown>
+  /** The version of the parsing that made `data`; a different one means it has to be made again. */
+  v?: number
 }
+
+/** How `data` is made of the text. */
+export interface Derive {
+  version: number
+  run(text: string): Record<string, unknown> | undefined
+}
+
+/** After this many milliseconds of work the browser gets a moment to do something else (20,000 objects take seconds to parse). */
+const SLICE_MS = 30
+const breathe = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 export interface MirrorStore {
   /** What was kept: the commit the copy was equal to, and the records. */
   load(): Promise<{ synced?: string; records: MirrorRecord[] }>
-  /** Replaces everything and sets the commit, in one step. */
-  replace(synced: string, records: MirrorRecord[]): Promise<void>
   /** Writes and removes records and sets the commit, in one step. */
   apply(synced: string, put: MirrorRecord[], remove: string[]): Promise<void>
 }
@@ -49,11 +61,13 @@ export class Mirror {
   #store: MirrorStore
   #backend: MirrorBackend
   #changed: () => void
+  #derive: Derive | undefined
   #running: Promise<void> | undefined
   #again = false
   #fullNext = false
 
-  constructor(store: MirrorStore, backend: MirrorBackend, changed: () => void = () => {}) {
+  constructor(store: MirrorStore, backend: MirrorBackend, changed: () => void = () => {}, derive?: Derive) {
+    this.#derive = derive
     this.#store = store
     this.#backend = backend
     this.#changed = changed
@@ -64,6 +78,13 @@ export class Mirror {
     const kept = await this.#store.load()
     this.records = new Map(kept.records.map((r) => [r.path, r]))
     this.synced = kept.records.length > 0 || kept.synced ? kept.synced : undefined
+    // What was kept with another version of the parsing (or without) is made again, once.
+    const old = this.#derive ? kept.records.filter((r) => r.v !== this.#derive!.version) : []
+    if (this.synced && old.length > 0) {
+      const made = await this.#complete(old)
+      await this.#store.apply(this.synced, made, [])
+      for (const record of made) this.records.set(record.path, record)
+    }
     if (this.synced) this.#changed()
     return this.synced !== undefined
   }
@@ -98,12 +119,13 @@ export class Mirror {
 
     const wanted = answer.changes.filter((c) => c.status !== 'removed')
     const texts = new Map((await this.#backend.texts(answer.raw, wanted)).map((t) => [t.id, t.text]))
-    const put: MirrorRecord[] = []
+    const read: MirrorRecord[] = []
     for (const change of wanted) {
       const text = texts.get(change.id)
       if (text === undefined) throw new Error(`Objekt ${change.id} fehlt in der Antwort.`)
-      put.push({ path: change.path, id: change.id, sha: change.sha, text })
+      read.push({ path: change.path, id: change.id, sha: change.sha, text })
     }
+    const put = await this.#complete(read)
     const remove = answer.changes.filter((c) => c.status === 'removed').map((c) => c.path)
     await this.#store.apply(answer.head, put, remove)
 
@@ -129,9 +151,33 @@ export class Mirror {
       if (text === undefined) throw new Error(`Objekt ${object.id} fehlt in der Antwort.`)
       records.push({ path: object.path, id: object.id, sha: object.sha, text })
     }
-    await this.#store.replace(tree.head, records)
+    // Only what is new needs its `data` (what is kept has it already).
+    const todo = records.filter((r) => this.#derive && r.v !== this.#derive.version)
+    const made = new Map((await this.#complete(todo)).map((r) => [r.path, r]))
+    for (let i = 0; i < records.length; i++) records[i] = made.get(records[i].path) ?? records[i]
+    // Only the differences are written: what is equal is not touched (comparing 20,000 objects should not rewrite them).
+    const put = records.filter((r) => this.records.get(r.path) !== r)
+    const inTree = new Set(tree.objects.map((o) => o.path))
+    const remove = [...this.records.keys()].filter((path) => !inTree.has(path))
+    await this.#store.apply(tree.head, put, remove)
     this.records = new Map(records.map((r) => [r.path, r]))
     this.synced = tree.head
     this.#changed()
+  }
+
+  /** Gives the records their `data`, in slices so that the page stays usable while thousands are parsed. */
+  async #complete(records: MirrorRecord[]): Promise<MirrorRecord[]> {
+    const derive = this.#derive
+    if (!derive) return records
+    const made: MirrorRecord[] = []
+    let slice = performance.now()
+    for (const record of records) {
+      made.push({ ...record, data: derive.run(record.text), v: derive.version })
+      if (performance.now() - slice > SLICE_MS) {
+        await breathe()
+        slice = performance.now()
+      }
+    }
+    return made
   }
 }

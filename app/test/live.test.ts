@@ -48,9 +48,11 @@ describe('the live connection', () => {
     const { live, sockets, news } = setup()
     live.start()
     sockets[0].onopen?.()
-    vi.advanceTimersByTime(PING_MS * 2)
-    expect(sockets[0].sent).toEqual(['ping', 'ping'])
+    vi.advanceTimersByTime(PING_MS)
     sockets[0].onmessage?.({ data: 'pong' })
+    vi.advanceTimersByTime(PING_MS)
+    sockets[0].onmessage?.({ data: 'pong' })
+    expect(sockets[0].sent).toEqual(['ping', 'ping'])
     expect(news).toHaveBeenCalledTimes(1) // only the one from opening
   })
 

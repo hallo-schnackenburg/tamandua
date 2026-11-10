@@ -1,9 +1,19 @@
-import { parseDocument } from 'yaml'
+import { parse, parseDocument } from 'yaml'
 
 /** Reads one top-level text field from the YAML, e.g. the title. Undefined if it is missing or not text. */
 export function readField(text: string, key: string): string | undefined {
   const value = parseDocument(text).get(key)
   return typeof value === 'string' ? value : undefined
+}
+
+/** The whole object as plain data, parsed once. Undefined if the text is not valid YAML or not a mapping. */
+export function readObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = parse(text)
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Reads one top-level field of any kind (text, list, object) as plain data. */

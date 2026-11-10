@@ -2,8 +2,8 @@
 // (archive-mirror.ts), which is kept equal to main of the data repository; the list and the title search
 // work on that copy.
 
-import { readField, readValue } from '@tamandua/core'
-import { Mirror, type MirrorBackend, type MirrorRecord } from './archive-mirror.js'
+import { readObject } from '@tamandua/core'
+import { Mirror, type Derive, type MirrorBackend, type MirrorRecord } from './archive-mirror.js'
 import { loadArchive, saveArchive } from './db.js'
 import { Live } from './live.js'
 import { placeOf } from './labels.js'
@@ -12,7 +12,8 @@ export interface Entry {
   id: string
   /** The hash of the file this was made from. */
   sha: string
-  text: string
+  /** The object as plain data (what the YAML says). */
+  data: Record<string, unknown>
   type?: string
   subtype?: string
   title: string
@@ -26,21 +27,28 @@ export interface Entry {
 
 const fold = (text: string): string => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
 
+/** The version of what is made of the text; raise it when `entryOf` or the detail view needs something the old `data` lacks. */
+export const DATA_VERSION = 1
+export const DERIVE: Derive = { version: DATA_VERSION, run: readObject }
+
+const word = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+
+/** The list entry of a record. Reads `data` (the text is only parsed here for a record that has none, which happens in tests). */
 export function entryOf(record: MirrorRecord): Entry {
-  const { text } = record
-  const title = readField(text, 'title') ?? ''
-  const date = readValue(text, 'date')
-  const external = readField(text, 'storage') === 'external'
+  const data = record.data ?? readObject(record.text) ?? {}
+  const title = word(data.title) ?? ''
+  const date = data.date
+  const external = word(data.storage) === 'external'
   return {
     id: record.id,
     sha: record.sha,
-    text,
-    type: readField(text, 'type'),
-    subtype: readField(text, 'subtype'),
+    data,
+    type: word(data.type),
+    subtype: word(data.subtype),
     title,
     date: typeof date === 'string' || typeof date === 'number' ? String(date) : undefined,
     external,
-    place: external ? placeOf(readValue(text, 'external')) : '',
+    place: external ? placeOf(data.external) : '',
     folded: fold(title),
   }
 }
@@ -88,11 +96,11 @@ export class ArchiveDb {
     this.#mirror = new Mirror(
       {
         load: loadArchive,
-        replace: (synced, records) => saveArchive(synced, records, [], true),
         apply: (synced, put, remove) => saveArchive(synced, put, remove),
       },
       backend,
       () => this.#publish(),
+      DERIVE,
     )
   }
 

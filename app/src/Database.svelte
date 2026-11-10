@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { readValue } from '@tamandua/core'
   import type { ArchiveDb, Entry } from './database.svelte.js'
   import { ENTITY_NAMES, EXTERNAL_NAMES, FIELD_NAMES, objectLabel } from './labels.js'
 
@@ -35,7 +34,7 @@
 
   /** The fields of an object as labelled lines; a list has one line per item. */
   function lines(entry: Entry): { label: string; values: string[] }[] {
-    const get = (key: string) => readValue(entry.text, key)
+    const get = (key: string): unknown => entry.data[key]
     const list = (key: string, one: (item: unknown) => string) => {
       const value = get(key)
       return (Array.isArray(value) ? value : value === undefined ? [] : [value]).map(one).filter(Boolean)
@@ -67,6 +66,22 @@
 
   const selected = $derived(archive.selected)
   const shown = $derived(archive.shown)
+
+  // The list is long (tens of thousands of objects are possible), so only the rows that can be seen are in the page, plus a few
+  // more above and below: the rows have a fixed height, so the position of every row is known without drawing the others.
+  const PITCH = 56 // the height of a row (52) and the gap below it (4)
+  const SPARE = 6
+  let scroller = $state<HTMLElement>()
+  let top = $state(0)
+  let viewport = $state(400)
+  const first = $derived(Math.max(0, Math.floor(top / PITCH) - SPARE))
+  const last = $derived(Math.min(shown.length, Math.ceil((top + viewport) / PITCH) + SPARE))
+  const visible = $derived(shown.slice(first, last))
+  // A new search starts at the top.
+  $effect(() => {
+    void archive.query
+    if (scroller) scroller.scrollTop = 0
+  })
 </script>
 
 <div class="database">
@@ -97,8 +112,9 @@
     {:else if shown.length === 0}
       <p class="quiet">Nichts gefunden.</p>
     {:else}
-      <ul class="list">
-        {#each shown as entry (entry.id)}
+      <div class="scroller" bind:this={scroller} bind:clientHeight={viewport} onscroll={(event) => (top = event.currentTarget.scrollTop)}>
+      <ul class="list" style:height="{shown.length * PITCH}px" style:padding-top="{first * PITCH}px">
+        {#each visible as entry (entry.id)}
           <li>
             <button class="row" class:current={entry.id === archive.selectedId} onclick={() => (archive.selectedId = entry.id)}>
               <span class="title" class:empty={!entry.title}>{entry.title || 'Ohne Titel'}</span>
@@ -107,6 +123,7 @@
           </li>
         {/each}
       </ul>
+      </div>
     {/if}
   </section>
 
@@ -133,8 +150,10 @@
   .count { font-size: 0.75rem; font-weight: 400; color: #888; }
   .search { font: inherit; font-size: 0.9rem; height: 2rem; box-sizing: border-box; padding: 0 12px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 999px; }
   .search:focus { outline: none; border-color: #36c; }
-  .list { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-  .row { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 9px 12px; text-align: left; font: inherit; background: #fff; border: 1px solid #ddd; border-radius: var(--r-m); cursor: pointer; }
+  .scroller { flex: 1; min-height: 0; overflow: auto; }
+  .list { box-sizing: border-box; margin: 0; padding: 0; list-style: none; }
+  .list li { height: 52px; margin-bottom: 4px; }
+  .row { display: flex; flex-direction: column; justify-content: center; gap: 3px; width: 100%; height: 100%; box-sizing: border-box; padding: 0 12px; text-align: left; font: inherit; background: #fff; border: 1px solid #ddd; border-radius: var(--r-m); cursor: pointer; }
   .row:hover { border-color: #b9c8ee; }
   .row.current { border-color: #36c; background: #eef3ff; }
   .title { font-size: 0.85rem; line-height: 1.3; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

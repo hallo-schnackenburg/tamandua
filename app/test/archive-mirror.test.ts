@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Mirror, type Change, type MirrorBackend, type MirrorRecord, type MirrorStore } from '../src/archive-mirror.js'
 
 const idOf = (n: number) => `01JABCDEFGHJKMNPQRSTVWXY${String(n).padStart(2, '0')}`
@@ -67,10 +67,6 @@ class MemoryStore implements MirrorStore {
   records = new Map<string, MirrorRecord>()
   async load() {
     return { synced: this.synced, records: [...this.records.values()] }
-  }
-  async replace(synced: string, records: MirrorRecord[]) {
-    this.synced = synced
-    this.records = new Map(records.map((r) => [r.path, r]))
   }
   async apply(synced: string, put: MirrorRecord[], remove: string[]) {
     this.synced = synced
@@ -212,5 +208,82 @@ describe('sync(true): making sure', () => {
     repo.files.set(pathOf(idOf(5)), 'e')
     await mirror.sync(true)
     expect(texts(mirror)).toEqual({ [idOf(1)]: 'a2', [idOf(3)]: 'c', [idOf(5)]: 'e' })
+  })
+})
+
+describe('the parsed data of the records', () => {
+  const derive = { version: 1, run: (text: string) => ({ text }) }
+  const withDerive = (version = 1) => {
+    const repo = new FakeRepo()
+    const store = new MemoryStore()
+    const run = vi.fn((text: string) => ({ text }))
+    return { repo, store, run, make: () => new Mirror(store, repo, () => {}, { version, run }) }
+  }
+
+  it('parses what is read, once, and keeps the result with the text', async () => {
+    const { repo, store, run, make } = withDerive()
+    repo.commit({ 1: 'a', 2: 'b' })
+    const mirror = make()
+    await mirror.sync()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect([...store.records.values()].map((r) => [r.text, r.data, r.v]).sort()).toEqual([['a', { text: 'a' }, 1], ['b', { text: 'b' }, 1]])
+    expect(derive.version).toBe(1)
+
+    repo.commit({ 2: 'b2' })
+    await mirror.sync()
+    expect(run).toHaveBeenCalledTimes(3) // only the one that changed
+    expect(mirror.records.get(pathOf(idOf(2)))?.data).toEqual({ text: 'b2' })
+  })
+
+  it('does not parse what is kept, after a reload and after a full comparison', async () => {
+    const { repo, run, make } = withDerive()
+    repo.commit({ 1: 'a', 2: 'b' })
+    await make().sync()
+    run.mockClear()
+    const again = make()
+    await again.open()
+    await again.sync(true)
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('makes the data again, once, when the version of the parsing changed', async () => {
+    const { repo, store, make, run } = withDerive(1)
+    repo.commit({ 1: 'a', 2: 'b' })
+    await make().sync()
+    run.mockClear()
+
+    const newer = new Mirror(store, repo, () => {}, { version: 2, run })
+    await newer.open()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect([...store.records.values()].every((r) => r.v === 2)).toBe(true) // kept in the store too
+    run.mockClear()
+    await newer.sync(true)
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('is not needed for a mirror that does not parse', async () => {
+    const { repo, mirror } = setup()
+    repo.commit({ 1: 'a' })
+    await mirror.sync()
+    expect([...mirror.records.values()][0].data).toBeUndefined()
+  })
+})
+
+describe('comparing everything', () => {
+  it('writes only the differences', async () => {
+    const { repo, store, mirror } = setup()
+    repo.commit({ 1: 'a', 2: 'b', 3: 'c' })
+    await mirror.sync()
+    const writes: string[][] = []
+    const apply = store.apply.bind(store)
+    store.apply = async (synced, put, remove) => {
+      writes.push([...put.map((r) => `+${r.id.slice(-2)}`), ...remove.map((p) => `-${p.slice(-7, -5)}`)])
+      return apply(synced, put, remove)
+    }
+    repo.files.set(pathOf(idOf(2)), 'b2')
+    repo.files.delete(pathOf(idOf(3)))
+    await mirror.sync(true)
+    expect(writes).toEqual([['+02', '-03']])
+    expect(store.records.size).toBe(2)
   })
 })

@@ -18,6 +18,8 @@ export interface Socket {
 export const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000]
 /** How often the connection says "ping": the other end answers "pong" without being woken up. */
 export const PING_MS = 25_000
+/** If no answer to a ping comes within this time, the connection is taken for dead (a train in a tunnel does not close it). */
+export const PONG_MS = 10_000
 
 /** The address of the live connection for a Worker address that may be relative (e.g. "/api"). */
 export function liveUrl(worker: string, base: string): string {
@@ -37,6 +39,7 @@ export class Live {
   #tries = 0
   #retry: ReturnType<typeof setTimeout> | undefined
   #ping: ReturnType<typeof setInterval> | undefined
+  #pong: ReturnType<typeof setTimeout> | undefined
   #wanted = false
 
   constructor(url: string, onNews: () => void, onState: (open: boolean) => void = () => {}, connect: (url: string) => Socket = (u) => new WebSocket(u) as unknown as Socket) {
@@ -78,10 +81,13 @@ export class Live {
         } catch {
           // the close that follows is handled there
         }
+        this.#pong ??= setTimeout(() => lost(), PONG_MS)
       }, PING_MS)
       this.#onNews() // something may have happened while there was no connection
     }
     socket.onmessage = (event) => {
+      clearTimeout(this.#pong) // it is alive
+      this.#pong = undefined
       if (event.data === 'pong') return
       this.#onNews()
     }
@@ -102,9 +108,20 @@ export class Live {
     this.#retry = setTimeout(() => this.#attempt(), pause)
   }
 
+  /** The network is back, or the page is in front again: do not wait for the next try, try now. */
+  nudge(): void {
+    if (!this.#wanted || this.open) return
+    clearTimeout(this.#retry)
+    this.#release()
+    this.#tries = 0
+    this.#attempt()
+  }
+
   /** Lets go of the connection without any more calls from it. */
   #release(): void {
     clearInterval(this.#ping)
+    clearTimeout(this.#pong)
+    this.#pong = undefined
     const socket = this.#socket
     this.#socket = undefined
     if (!socket) return
