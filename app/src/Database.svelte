@@ -74,16 +74,24 @@
     <h2>
       Objekte
       <span class="count">{archive.state === 'ready' ? (archive.query ? `${shown.length} von ${archive.entries.length}` : archive.entries.length) : ''}</span>
-      <button class="reload" title="Neu laden" aria-label="Neu laden" disabled={archive.syncing} onclick={() => archive.refresh(true)}>↻</button>
+      {#if archive.syncing && archive.state === 'ready'}<span class="spinner" role="status" aria-label="Wird aktualisiert" title="Wird aktualisiert"></span>{/if}
+      {#if archive.liveState === 'live'}
+        <span class="badge live" title="Änderungen am Online-Archiv erscheinen hier sofort.">Live</span>
+      {:else if archive.liveState === 'connecting'}
+        <span class="badge connecting" title="Die Verbindung zum Online-Archiv wird aufgebaut.">Verbindet<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
+      {:else if archive.liveState === 'lost'}
+        <span class="badge lost" title="Keine Verbindung zum Online-Archiv. Es wird jede Minute geprüft.">Nicht live</span>
+        <button class="refresh" disabled={archive.syncing} onclick={() => archive.refresh(true)}>Aktualisieren</button>
+      {/if}
     </h2>
     <input class="search" type="search" placeholder="Titel suchen" bind:value={archive.query} aria-label="Titel suchen" />
     {#if archive.stale && archive.state === 'ready'}
-      <p class="problem small">Keine Verbindung zum Archiv. Du siehst den zuletzt geladenen Stand.</p>
+      <p class="problem small">Keine Verbindung zum Online-Archiv. Du siehst den zuletzt geladenen Stand.</p>
     {/if}
     {#if archive.state === 'failed'}
       <p class="problem">Die Datenbank konnte nicht gelesen werden: {archive.error}</p>
     {:else if archive.state !== 'ready'}
-      <p class="quiet">Wird geladen …</p>
+      <p class="loading" role="status"><span class="spinner" aria-hidden="true"></span>Wird geladen …</p>
     {:else if archive.entries.length === 0}
       <p class="quiet">Im Archiv ist noch kein Objekt.</p>
     {:else if shown.length === 0}
@@ -123,9 +131,6 @@
   .pane { display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: var(--r-m); padding: 12px; }
   h2 { display: flex; align-items: center; gap: 8px; height: 1.6rem; margin: 0 0 8px; font-size: 1rem; }
   .count { font-size: 0.75rem; font-weight: 400; color: #888; }
-  .reload { margin-left: auto; width: 1.6rem; height: 1.6rem; padding: 0; border: 0; border-radius: 50%; background: none; color: #36c; font-size: 1.1rem; cursor: pointer; }
-  .reload:hover:not(:disabled) { background: #eef2fb; }
-  .reload:disabled { opacity: 0.4; cursor: default; }
   .search { font: inherit; font-size: 0.9rem; height: 2rem; box-sizing: border-box; padding: 0 12px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 999px; }
   .search:focus { outline: none; border-color: #36c; }
   .list { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
@@ -135,6 +140,26 @@
   .title { font-size: 0.85rem; line-height: 1.3; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title.empty { font-weight: 400; color: #999; }
   .sub { font-size: 0.75rem; line-height: 1.3; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .spinner { flex: none; width: 12px; height: 12px; border: 1.5px solid #b9c8ee; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* The same quiet labels as in the header: a dot and a word. */
+  .badge { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 1.4rem; box-sizing: border-box; padding: 0 10px; border-radius: 999px; background: #f0f0ee; color: #666; font-size: 0.72rem; font-weight: 400; white-space: nowrap; }
+  .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #999; }
+  .badge.live { background: #e9f5ec; color: #2a7a3b; }
+  .badge.live::before { background: #3aa655; }
+  .badge.lost { background: #fdebd7; color: #a85408; }
+  .badge.lost::before { background: #e07b1a; }
+  /* Three dots that rise and fall one after the other. */
+  .badge.connecting::before { display: none; }
+  .dots { display: inline-flex; gap: 2px; margin-left: 1px; }
+  .dots i { width: 3px; height: 3px; border-radius: 50%; background: #888; animation: bubble 1.1s ease-in-out infinite; }
+  .dots i:nth-child(2) { animation-delay: 0.15s; }
+  .dots i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes bubble { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-3px); opacity: 1; } }
+  .refresh { font: inherit; font-size: 0.72rem; height: 1.4rem; padding: 0 10px; border: 1px solid #b9c8ee; border-radius: 999px; background: #fff; color: #36c; cursor: pointer; }
+  .refresh:hover:not(:disabled) { background: #eef2fb; }
+  .refresh:disabled { opacity: 0.4; cursor: default; }
+  .loading { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 24px 0; color: #888; font-size: 0.9rem; }
   .quiet { margin: 0; color: #aaa; font-size: 0.9rem; }
   .quiet.center { margin: auto; }
   .problem { margin: 0; color: #a11; font-size: 0.9rem; }

@@ -5,6 +5,7 @@
 import { readField, readValue } from '@tamandua/core'
 import { Mirror, type MirrorBackend, type MirrorRecord } from './archive-mirror.js'
 import { loadArchive, saveArchive } from './db.js'
+import { Live } from './live.js'
 import { placeOf } from './labels.js'
 
 export interface Entry {
@@ -44,8 +45,12 @@ export function entryOf(record: MirrorRecord): Entry {
   }
 }
 
-/** How often the repository is asked whether something changed, as long as nobody tells us (and the page is visible). */
+/** How often the repository is asked whether something changed (while the page is visible), as long as the live connection is not there. */
 const POLL_MS = 60_000
+/** With the live connection open, it is asked anyway at this distance, in case a message got lost. */
+const SAFETY_MS = 10 * 60_000
+/** How long "connecting" is shown before the connection counts as lost. */
+const LIVE_WAIT_MS = 8_000
 /** How often the copy is compared with everything on main, to be sure. */
 const VERIFY_MS = 30 * 60_000
 
@@ -57,6 +62,11 @@ export class ArchiveDb {
   syncing = $state(false)
   /** The last attempt to bring it up to date failed (the copy that is there is shown anyway). */
   stale = $state(false)
+  /**
+   * The live connection: `live` (open: changes arrive at once, the repository is asked only now and then), `connecting`
+   * (just started or just lost), `lost` (it does not come back: the repository is asked every minute), `none` (no Worker, no connection).
+   */
+  liveState = $state<'none' | 'connecting' | 'live' | 'lost'>('none')
   entries = $state.raw<Entry[]>([])
   query = $state('')
   selectedId = $state<string>()
@@ -64,9 +74,17 @@ export class ArchiveDb {
   #cache = new Map<string, Entry>()
   #timer: ReturnType<typeof setInterval> | undefined
   #lastVerified = 0
+  #lastSync = 0
   #started = false
+  #channel: Live | undefined
+  #giveUp: ReturnType<typeof setTimeout> | undefined
 
-  constructor(backend: MirrorBackend) {
+  /** `liveAddress`: the WebSocket on which the Worker tells that main moved; without it the repository is only polled. */
+  constructor(backend: MirrorBackend, liveAddress?: string) {
+    if (liveAddress) {
+      this.liveState = 'connecting'
+      this.#channel = new Live(liveAddress, () => void this.refresh(), (open) => this.#liveChanged(open))
+    }
     this.#mirror = new Mirror(
       {
         load: loadArchive,
@@ -92,27 +110,70 @@ export class ArchiveDb {
   async start(): Promise<void> {
     if (this.#started) return
     this.#started = true
-    this.state = 'loading'
+    if (this.state !== 'ready') this.state = 'loading'
     try {
-      await this.#mirror.open()
+      // What the browser kept is shown at once; the news come in behind it.
+      if (await this.#mirror.open()) this.state = 'ready'
     } catch {
       // the browser's storage does not work: start from nothing
     }
+    this.#channel?.start() // (it brings the copy up to date as soon as it is open)
+    this.#waitForLive()
+    window.addEventListener('online', this.#online)
+    window.addEventListener('offline', this.#offline)
     await this.refresh()
     this.#timer = setInterval(() => {
-      if (!document.hidden) void this.refresh()
+      if (document.hidden) return
+      if (this.liveState === 'live' && Date.now() - this.#lastSync < SAFETY_MS) return
+      void this.refresh()
     }, POLL_MS)
     document.addEventListener('visibilitychange', this.#visible)
   }
 
   stop(): void {
     this.#started = false
+    this.#channel?.stop()
+    clearTimeout(this.#giveUp)
+    if (this.#channel) this.liveState = 'connecting'
     clearInterval(this.#timer)
+    window.removeEventListener('online', this.#online)
+    window.removeEventListener('offline', this.#offline)
     document.removeEventListener('visibilitychange', this.#visible)
   }
 
   #visible = () => {
-    if (!document.hidden) void this.refresh()
+    if (document.hidden) return
+    this.#channel?.nudge()
+    void this.refresh()
+  }
+
+  /** The network is back: connect at once, do not wait for the next try. */
+  #online = () => {
+    this.#channel?.nudge()
+    void this.refresh()
+  }
+
+  #offline = () => {
+    if (this.#channel) this.liveState = 'lost'
+  }
+
+  #liveChanged(open: boolean): void {
+    if (open) {
+      clearTimeout(this.#giveUp)
+      this.liveState = 'live'
+    } else {
+      this.#waitForLive()
+    }
+  }
+
+  /** "Connecting" is shown for a moment; if it does not work then, it is "lost". */
+  #waitForLive(): void {
+    if (!this.#channel || this.liveState === 'live') return
+    this.liveState = 'connecting'
+    clearTimeout(this.#giveUp)
+    this.#giveUp = setTimeout(() => {
+      if (this.liveState === 'connecting') this.liveState = 'lost'
+    }, LIVE_WAIT_MS)
   }
 
   /** Brings the copy up to date (all of it from time to time, or when asked to). */
@@ -122,6 +183,7 @@ export class ArchiveDb {
       const verify = full || !this.#mirror.synced || Date.now() - this.#lastVerified > VERIFY_MS
       await this.#mirror.sync(verify)
       if (verify) this.#lastVerified = Date.now()
+      this.#lastSync = Date.now()
       this.stale = false
       this.state = 'ready'
     } catch (error) {

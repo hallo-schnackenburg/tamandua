@@ -10,6 +10,6 @@ export default defineConfig({
     strictPort: true,
     // The Worker is reached below /api on the same address, so that the session cookie is
     // an ordinary same-origin cookie. Deployed, the same mapping is a route in front of the Worker.
-    proxy: { '/api': 'http://localhost:8787' },
+    proxy: { '/api': { target: 'http://localhost:8787', ws: true } },
   },
 })

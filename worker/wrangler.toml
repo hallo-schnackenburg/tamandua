@@ -16,8 +16,26 @@ APP_URL = "http://localhost:5173"
 
 
 
+# The hub that tells every open browser that the archive changed (src/hub.ts). Bindings and migrations are not
+# inherited by [env.*]: every environment declares its own.
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
 [env.staging]
 workers_dev = false
+
+[[env.staging.durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
 
 [env.staging.vars]
 ALLOWED_ORIGIN = "https://tamandua-staging.schnackenburg.de"
@@ -38,6 +56,14 @@ S3_BUCKET = "schnackenburg-archiv-staging"
 
 [env.production]
 workers_dev = false
+
+[[env.production.durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
 
 [env.production.vars]
 ALLOWED_ORIGIN = "https://tamandua.schnackenburg.de"

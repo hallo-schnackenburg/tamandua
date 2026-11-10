@@ -6,6 +6,7 @@
   import Sessions from './Sessions.svelte'
   import Database from './Database.svelte'
   import { ArchiveDb } from './database.svelte.js'
+  import { liveUrl } from './live.js'
   import { FakeAgent } from './agent.js'
   import { WorkerAgent } from './worker-agent.js'
   import { FakeStore, S3Store } from './uploader.js'
@@ -18,11 +19,13 @@
   const workerUrl = import.meta.env.VITE_WORKER_URL
   const backend = workerUrl ? new HttpBackend(workerUrl) : new FakeBackend()
   const ws = new Workspace(workerUrl ? new S3Store(workerUrl) : new FakeStore(), workerUrl ? new WorkerAgent(workerUrl) : new FakeAgent(), backend)
-  const archive = new ArchiveDb(backend.archive)
+  const archive = new ArchiveDb(backend.archive, workerUrl ? liveUrl(workerUrl, location.href) : undefined)
 
   // The copy of the archive in the browser is kept up to date for as long as somebody is signed in.
+  // (A derived value: the effect only runs again when somebody signs in or out, not whenever the session is renewed.)
+  const signedIn = $derived(ws.login.state === 'user')
   $effect(() => {
-    if (ws.login.state !== 'user') return
+    if (!signedIn) return
     void archive.start()
     return () => archive.stop()
   })

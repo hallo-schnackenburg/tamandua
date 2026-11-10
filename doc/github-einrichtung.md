@@ -63,6 +63,39 @@ Geheimnisse, lokal in `worker/.secrets/dev`, deployed mit `npx wrangler secret p
 
 - `GITHUB_CLIENT_SECRET`: das Client Secret der App
 - `SESSION_SECRET`: ein langer Zufallswert, z. B. `openssl rand -base64 32`
+- `WEBHOOK_SECRET`: ein langer Zufallswert (siehe Abschnitt "Webhook"); derselbe Wert steht im Webhook des Daten-Repos
+
+### Webhook: Änderungen sofort in allen Browsern
+
+Damit alle, die die App offen haben, Änderungen am Archiv (also einen gemergten Pull Request) nach ein bis zwei
+Sekunden sehen, ruft GitHub bei jedem Push den Worker auf. Der Worker gibt das über einen Durable Object ("Hub", ein
+einzelner Verteiler im Worker-Projekt, kein eigener Server) an alle offenen Browser weiter, und die holen sich, was neu
+ist. Ohne Webhook funktioniert alles weiter, die App fragt dann nur einmal pro Minute nach.
+
+Im Daten-Repo unter Settings → Webhooks → Add webhook:
+
+- Payload URL: `https://<Adresse der App>/api/hook/github` (Staging und Production), lokal die Adresse des Tunnels
+  (siehe unten) plus `/hook/github`
+- Content type: `application/json`
+- Secret: der Wert von `WEBHOOK_SECRET`
+- Events: "Just the push event"
+
+GitHub schickt gleich einen Ping; unter "Recent Deliveries" muss dort ein grünes Häkchen stehen. Der Worker beachtet nur
+Pushes auf `main` des eigenen Daten-Repos und prüft bei jedem Aufruf die Signatur.
+
+Der Hub wird beim ersten Deploy angelegt (`[[migrations]]` in `wrangler.toml`; auf dem Free-Plan nur mit SQLite-Speicher,
+den wir nutzen). Er schläft, solange nichts gesendet wird, und kostet dann nichts.
+
+**Lokal** erreicht GitHub `localhost` nicht. Mit einem Tunnel geht es trotzdem:
+
+```
+cloudflared tunnel --url http://localhost:8787
+```
+
+Die ausgegebene Adresse (`https://….trycloudflare.com`) kommt mit `/hook/github` als Payload URL in den Webhook von
+`archive-dev`; sie ändert sich bei jedem Start des Tunnels. Der Worker (`npm run dev:worker`) braucht `WEBHOOK_SECRET`
+in `worker/.secrets/dev`. Im Tab "Datenbank" zeigt der kleine Punkt neben der Überschrift, ob die Live-Verbindung
+steht (grün) oder nur nachgefragt wird (grau).
 
 ## 4. Freiwillige freischalten
 

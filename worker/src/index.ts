@@ -1,10 +1,12 @@
 // The Worker. Routes (an optional /api in front is ignored, so the app can reach it under /api):
 //   /auth/*       sign in with GitHub, who am I, sign out (auth.ts). Open to everyone.
+//   POST /hook/github  GitHub tells that the archive changed; passed on to everybody who has the app open (webhook.ts).
 // and only for a signed-in person who may write to the data repository:
 //   POST /chat    passes a chat message to the model and returns tool calls. It holds the
 //                 Anthropic key, so the key never reaches the browser.
 //   POST /upload  checks which files the browser wants to store and signs upload URLs for the
 //                 bucket. It holds the bucket's secret key, which never reaches the browser either.
+//   GET  /live    a WebSocket on which the browser hears that the archive changed (hub.ts).
 //   /repo/*       saves objects to the data repository and opens the pull request (repo.ts).
 //
 // NOT YET THERE (needed before this is deployed for others): a limit per person and a spending cap.
@@ -14,9 +16,13 @@ import { BadRequest, buildModelRequest, parseChatRequest, toToolCalls } from './
 import { parseUploadRequest, planUpload, s3Config, type UploadEnv } from './upload.js'
 import { handleAuth, readSession, type AuthEnv } from './auth.js'
 import { handleRepo } from './repo.js'
+import { hubOf, type HubNamespace } from './hub.js'
+import { handleHook, type HookEnv } from './webhook.js'
 import type { Auth } from './session.js'
 
-export interface Env extends GeocodeEnv, UploadEnv, AuthEnv {
+export { Hub } from './hub.js'
+
+export interface Env extends GeocodeEnv, UploadEnv, AuthEnv, HookEnv {
   ANTHROPIC_API_KEY?: string
   ALLOWED_ORIGIN?: string
   MODEL?: string
@@ -56,6 +62,9 @@ export async function handle(
     })
   }
 
+  const hook = await handleHook(request, route, env)
+  if (hook) return hook
+
   const auth = await handleAuth(request, route, env, fetchFn)
   if (auth) return auth
 
@@ -63,7 +72,8 @@ export async function handle(
   const signed = await readSession(request, env, fetchFn)
   if (!signed) return json({ error: 'Nicht angemeldet.' }, 401, env)
   const response = await signedRoute(request, route, signed.session, env, fetchFn, pause)
-  if (signed.cookie) response.headers.append('set-cookie', signed.cookie)
+  // (The headers of a WebSocket's response cannot be changed; the next request renews the cookie.)
+  if (signed.cookie && response.status !== 101) response.headers.append('set-cookie', signed.cookie)
   return response
 }
 
@@ -75,6 +85,7 @@ async function signedRoute(
   fetchFn: typeof fetch,
   pause?: (ms: number) => Promise<void>,
 ): Promise<Response> {
+  if (route === '/live' && request.method === 'GET') return live(request, env)
   const repo = await handleRepo(request, route, session, env, fetchFn)
   if (repo) return repo
   if (request.method === 'POST' && route === '/upload') return upload(request, env, fetchFn)
@@ -120,6 +131,15 @@ async function signedRoute(
   }
   const calls = await resolveGeocodes(toToolCalls(await answer.json()), env, fetchFn, pause)
   return json({ calls }, 200, env)
+}
+
+/** The WebSocket on which the browser hears that the archive changed (see hub.ts). */
+async function live(request: Request, env: Env): Promise<Response> {
+  if (!env.HUB) return json({ error: 'The server has no hub (HUB).' }, 503, env)
+  if (request.headers.get('upgrade') !== 'websocket') return json({ error: 'Expected a WebSocket.' }, 426, env)
+  // A WebSocket is not held back by the browser's cross-origin rules: only our own app may open one.
+  if (!env.ALLOWED_ORIGIN || request.headers.get('origin') !== env.ALLOWED_ORIGIN) return json({ error: 'Wrong origin.' }, 403, env)
+  return hubOf(env.HUB).fetch(request)
 }
 
 async function upload(request: Request, env: Env, fetchFn: typeof fetch): Promise<Response> {
