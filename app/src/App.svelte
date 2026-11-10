@@ -4,6 +4,7 @@
   import Files from './Files.svelte'
   import Objects from './Objects.svelte'
   import Sessions from './Sessions.svelte'
+  import Database from './Database.svelte'
   import { FakeAgent } from './agent.js'
   import { WorkerAgent } from './worker-agent.js'
   import { FakeStore, S3Store } from './uploader.js'
@@ -19,6 +20,29 @@
     workerUrl ? new WorkerAgent(workerUrl) : new FakeAgent(),
     workerUrl ? new HttpBackend(workerUrl) : new FakeBackend(),
   )
+
+  // The tabs separate the UI concepts: capturing (the three panes) and the database. Only a convenience of this browser.
+  type Tab = 'capture' | 'database'
+  const TABS: { id: Tab; label: string }[] = [
+    { id: 'capture', label: 'Erfassen' },
+    { id: 'database', label: 'Datenbank' },
+  ]
+  let tab = $state<Tab>(readTab())
+  function readTab(): Tab {
+    try {
+      return localStorage.getItem('tamandua.tab') === 'database' ? 'database' : 'capture'
+    } catch {
+      return 'capture'
+    }
+  }
+  function show(next: Tab) {
+    tab = next
+    try {
+      localStorage.setItem('tamandua.tab', next)
+    } catch {
+      // not remembered, that is all
+    }
+  }
 
   /** Why a sign-in did not work, from the address GitHub sent the browser back to (see the Worker's /auth/callback). */
   function loginNotice(): string | undefined {
@@ -91,6 +115,12 @@
     {@const user = ws.login.user}
     <header>
       <img class="logo" src={`${import.meta.env.BASE_URL}tamandua.png`} alt="Tamandua" title="Tamandua" height="52" />
+      <div class="tabs" role="tablist" aria-label="Ansicht">
+        {#each TABS as t (t.id)}
+          <button role="tab" class:active={tab === t.id} aria-selected={tab === t.id} onclick={() => show(t.id)}>{t.label}</button>
+        {/each}
+      </div>
+      {#if tab === 'capture'}
       <Sessions workspace={ws} />
       {#if ws.current?.state === 'submitted'}
         <span class="state submitted">Eingereicht</span>
@@ -110,6 +140,7 @@
           </button>
         </span>
       {/if}
+      {/if}
       <span class="sync" class:failed={ws.syncState === 'failed'} role="status">
         {#if ws.syncState === 'failed'}
           Noch nicht in GitHub gesichert{ws.syncError ? `: ${ws.syncError}` : ''}. Neuer Versuch in einer Minute.
@@ -126,7 +157,7 @@
       <button class="link" onclick={() => ws.logout()}>Abmelden</button>
     </header>
 
-    <div class="panes">
+    <div class="panes" class:gone={tab !== 'capture'}>
       <section class="pane">
         <h2>Chat</h2>
         <Chat workspace={ws} />
@@ -168,6 +199,7 @@
         <Objects workspace={ws} />
       </section>
     </div>
+    {#if tab === 'database'}<Database />{/if}
   {:else if ws.login.state === 'loading'}
     <div class="welcome"><p class="quiet">Einen Moment …</p></div>
   {:else}
@@ -192,6 +224,11 @@
   /* A raised white bar: the session is the center of it, its state or the way forward stands right next to it. */
   header { position: relative; display: flex; align-items: center; gap: 12px; font-size: 0.9rem; padding: 8px 14px 8px 84px; background: #fff; border-radius: var(--r-l); box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 14px rgb(0 0 0 / 0.05); }
   .spacer { flex: 1; }
+  /* One pill with a state per view, like the session pill: the active one is raised and blue. */
+  .tabs { display: inline-flex; align-items: center; gap: 2px; height: 2.3rem; box-sizing: border-box; padding: 3px; border-radius: 999px; background: #f0f0ee; }
+  .tabs button { height: 100%; padding: 0 16px; border: 1px solid transparent; border-radius: 999px; background: none; color: #666; font-weight: 600; }
+  .tabs button:hover:not(.active) { color: #36c; }
+  .tabs button.active { background: #fff; border-color: #ddd; color: #36c; cursor: default; box-shadow: 0 1px 2px rgb(0 0 0 / 0.06); }
   .sync { color: #777; }
   .sync.failed { color: #a11; }
   /* The state is a quiet label (gray, with a dot); the way forward is a solid blue button. They must not be mistaken for each other. */
@@ -235,6 +272,7 @@
   .banner a { color: #36c; margin: 0 4px; }
   .quiet { color: #888; font-size: 0.9rem; }
   .panes { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); /* minmax(0, …): long YAML lines must not widen the pane */ gap: 12px; min-height: 0; }
+  .panes.gone { display: none; }
   /* The hint of an empty pane: centered below the heading, on the same height in every pane. */
   :global(.empty-state) { position: absolute; margin: 0; padding: 0; inset: calc(20px + 1.6rem) 12px 12px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; line-height: 1.3; color: #aaa; text-align: center; pointer-events: none; }
   :global(.empty-state small) { font-size: 0.78rem; color: #c4c4c4; }
