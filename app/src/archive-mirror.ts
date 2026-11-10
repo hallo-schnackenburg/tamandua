@@ -198,8 +198,11 @@ export class Mirror {
     }
     if (!snapshot || snapshot.records.length === 0) return
     const made = await this.#complete(snapshot.records.map(({ path, id, sha, text }) => ({ path, id, sha, text })))
-    await this.#store.apply(undefined, made, [])
     for (const record of made) this.records.set(record.path, record)
+    // The snapshot is a whole copy, only a little old: it is shown at once, and the comparison with main follows in the background.
+    this.onProgress(undefined)
+    this.#changed()
+    await this.#store.apply(undefined, made, [])
   }
 
   /** Gives the records their `data`, in slices so that the page stays usable while thousands are parsed. */

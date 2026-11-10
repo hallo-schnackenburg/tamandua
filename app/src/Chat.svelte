@@ -134,7 +134,7 @@
   .wait { color: #888; display: flex; align-items: center; gap: 8px; }
   .spinner { width: 10px; height: 10px; border: 1.5px solid #ccc; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px; border: 1px solid #e2e0dc; border-radius: var(--r-l); background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06); }
+  .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 9px 12px; border: 1px solid #e2e0dc; border-radius: var(--r-l); background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06); }
   .composer:focus-within { border-color: #c9c6c0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.09); }
   .subjects { display: flex; flex-wrap: wrap; gap: 6px; align-self: flex-start; max-width: 100%; }
   .subject { font-size: 0.8rem; color: #6b5a1e; padding: 2px 8px; background: #f7f0d2; border-radius: 999px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

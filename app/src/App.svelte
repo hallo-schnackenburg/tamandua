@@ -208,7 +208,7 @@
         <Objects workspace={ws} />
       </section>
     </div>
-    {#if tab === 'database'}<Database {archive} />{/if}
+    {#if tab === 'database'}<Database {archive} filesBase={ws.filesBase} />{/if}
   {:else if ws.login.state === 'loading'}
     <div class="welcome"><p class="quiet">Einen Moment …</p></div>
   {:else}

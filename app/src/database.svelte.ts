@@ -220,6 +220,7 @@ export class ArchiveDb {
       next.set(record.path, kept && kept.sha === record.sha ? kept : entryOf(record))
     }
     this.#cache = next
+    if (this.state === 'loading' && next.size > 0) this.state = 'ready' // the snapshot is shown before the comparison with main is done
     this.entries = [...next.values()].sort((a, b) => a.title.localeCompare(b.title, 'de'))
     if (!this.entries.some((e) => e.id === this.selectedId)) this.selectedId = undefined
   }

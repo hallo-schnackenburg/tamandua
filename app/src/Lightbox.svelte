@@ -19,7 +19,7 @@
       made.push(url)
       return url
     }
-    previewUrl = source.preview ? make(source.preview) : undefined
+    previewUrl = source.preview instanceof Blob ? make(source.preview) : source.preview
     largeUrl = source.large instanceof Blob ? make(source.large) : source.large
     return () => made.forEach((url) => URL.revokeObjectURL(url))
   })

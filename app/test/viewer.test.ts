@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addressOf, sourceOf, viewable } from '../src/viewer.js'
+import { addressOf, bucketPreview, sourceOf, viewable } from '../src/viewer.js'
 
 const BASE = 'https://archiv.example'
 const SHA = 'a'.repeat(64)
@@ -55,5 +55,15 @@ describe('which picture the detail view shows', () => {
 
   it('joins an address without doubling the slash', () => {
     expect(addressOf('https://x.example/', 'files/a')).toBe('https://x.example/files/a')
+  })
+})
+
+describe('the small picture of a file in the bucket', () => {
+  it('is its variant "preview", else the original of a JPEG or PNG, else nothing', () => {
+    const entry = (over: object = {}) => ({ path: original, mime: 'image/jpeg', variants: [{ kind: 'preview', path: 'files/p.jpg' }], ...over })
+    expect(bucketPreview(entry(), BASE)).toBe(`${BASE}/files/p.jpg`)
+    expect(bucketPreview(entry({ variants: [] }), BASE)).toBe(`${BASE}/${original}`)
+    expect(bucketPreview(entry({ variants: [], mime: 'image/tiff' }), BASE)).toBeUndefined()
+    expect(bucketPreview(entry({ variants: [], path: undefined }), BASE)).toBeUndefined()
   })
 })

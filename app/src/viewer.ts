@@ -14,13 +14,14 @@ interface Variant {
 export interface Viewable {
   name: string
   entry: { path?: unknown; mime?: unknown; variants?: unknown; width?: unknown; height?: unknown }
-  preview?: Blob
+  /** The small picture: made in the browser (a Blob), or an address in the bucket (for objects that are in the archive). */
+  preview?: Blob | string
   web?: Blob
 }
 
 export interface Source {
   /** The picture that is shown at once (the preview), and then replaced. */
-  preview?: Blob
+  preview?: Blob | string
   /** The bigger one: a local picture or an address in the bucket. */
   large?: Blob | string
   /** The original in the bucket, to open in another tab (only for what the browser can show). */
@@ -54,6 +55,18 @@ export function sourceOf(file: Viewable, base?: string): Source {
     width: typeof entry.width === 'number' ? entry.width : undefined,
     height: typeof entry.height === 'number' ? entry.height : undefined,
   }
+}
+
+/**
+ * The small picture of a file that is in the bucket: its variant "preview", or for a JPEG or PNG without one the original.
+ * Undefined if there is nothing the browser could show.
+ */
+export function bucketPreview(entry: Viewable['entry'], base: string): string | undefined {
+  const variants = Array.isArray(entry.variants) ? (entry.variants as Variant[]) : []
+  const preview = variants.find((v) => v.kind === 'preview')
+  if (typeof preview?.path === 'string') return addressOf(base, preview.path)
+  const mime = typeof entry.mime === 'string' ? entry.mime : ''
+  return typeof entry.path === 'string' && SHOWN.has(mime) ? addressOf(base, entry.path) : undefined
 }
 
 /** Whether there is anything to show for the file. */

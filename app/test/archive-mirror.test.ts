@@ -398,3 +398,17 @@ describe('an interrupted first reading', () => {
     expect(store.synced).toBe(repo.head)
   })
 })
+
+describe('showing the snapshot early', () => {
+  it('tells that there is something to show as soon as the snapshot is in, before main is compared', async () => {
+    const repo = new FakeRepo()
+    const store = new MemoryStore()
+    repo.commit({ 1: 'a', 2: 'b' })
+    repo.snapshotOf = [{ path: pathOf(idOf(1)), id: idOf(1), sha: shaOf('a'), text: 'a' }]
+    const seen: { records: number; trees: number }[] = []
+    const mirror = new Mirror(store, repo, () => seen.push({ records: mirror.records.size, trees: repo.calls.tree }))
+    await mirror.sync()
+    expect(seen[0]).toEqual({ records: 1, trees: 0 }) // the snapshot, before the tree was asked for
+    expect(seen.at(-1)).toEqual({ records: 2, trees: 1 }) // then the result of the comparison
+  })
+})
