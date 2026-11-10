@@ -101,6 +101,8 @@ export interface UiState {
   selection: string[]
   /** SHA-256 of the file whose object was open. */
   active?: string
+  /** The object that was open if it has no file (it lives elsewhere). */
+  object?: string
   /** The session that was open. */
   session?: string
 }

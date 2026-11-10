@@ -135,6 +135,22 @@ interface OpenPull {
   draft?: boolean
 }
 
+/** A pull request as the list of GitHub gives it (only what is read). */
+export interface ListedPull {
+  number: number
+  html_url: string
+  state: 'open' | 'closed'
+  merged_at: string | null
+  draft?: boolean
+  title: string
+  body: string | null
+  created_at: string
+  head: { ref: string; sha: string }
+}
+
+/** 100 files a page; a session holds a few dozen objects, so this is far more than needed. */
+const MAX_FILE_PAGES = 10
+
 /** One person's work on the data repository: their own branch and its pull request. */
 export class Repo {
   constructor(
@@ -271,6 +287,23 @@ export class Repo {
       if (error instanceof GitHubError && error.status === 422) throw new GitHubError('There is nothing new to submit.', 409)
       throw error
     }
+  }
+
+  /** The newest pull requests (open, closed, merged) to the base branch; the caller picks the ones that are sessions. */
+  async pulls(): Promise<ListedPull[]> {
+    return this.call<ListedPull[]>('GET', `/pulls?state=all&base=${this.base}&sort=created&direction=desc&per_page=100`)
+  }
+
+  /** What the pull request changes: its head commit and the files it adds, changes or removes. */
+  async pullFiles(number: number): Promise<{ head: string; files: { filename: string; status: string }[] }> {
+    const data = await this.call<{ head: { sha: string } }>('GET', `/pulls/${number}`)
+    const files: { filename: string; status: string }[] = []
+    for (let page = 1; page <= MAX_FILE_PAGES; page++) {
+      const batch = await this.call<{ filename: string; status: string }[]>('GET', `/pulls/${number}/files?per_page=100&page=${page}`)
+      files.push(...batch)
+      if (batch.length < 100) break
+    }
+    return { head: data.head.sha, files }
   }
 
   async pull(number: number): Promise<Pull> {

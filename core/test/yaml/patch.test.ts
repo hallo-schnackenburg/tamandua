@@ -139,6 +139,12 @@ files:
     for (const field of ['id', 'type', 'files']) expect(() => setField(text, field, 'x', undefined)).toThrow(/cannot be changed/)
   })
 
+  it('lets the type of an object without files be set, nothing depends on it yet', () => {
+    const empty = 'id: 01JC8Z3Q7M5K2V9X4T6R1B0N8D\ntype:\ntitle: x\n'
+    expect(parse(ok(setField(empty, 'type', 'image', undefined))).type).toBe('image')
+    expect(() => setField(empty, 'id', 'x', undefined)).toThrow(/cannot be changed/)
+  })
+
   it('refuses broken YAML', () => {
     expect(() => setField('title: [x', 'title', 'y', undefined)).toThrow(/syntax error/)
   })
@@ -171,6 +177,17 @@ describe('removeFile', () => {
   it('leaves an empty list when the last file goes', () => {
     const one = addFile(base('image'), entry)
     expect(parse(removeFile(one, entry.sha256 as string)).files).toEqual([])
+  })
+
+  it('writes the files in block style again when one is added after the last went', () => {
+    const emptied = removeFile(addFile(base('image'), entry), entry.sha256 as string)
+    expect(emptied).toContain('files: []')
+    const { role: _r, ...other } = file('x', 'b')
+    const again = addFile(emptied, other)
+    expect(again).not.toContain('[')
+    expect(again).toContain('files:\n  - role: main')
+    expect(parse(again).files).toHaveLength(1)
+    expect(validateObjectYaml(again)).toEqual([])
   })
 
   it('refuses a file that is not part of the object, and broken YAML', () => {

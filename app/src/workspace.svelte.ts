@@ -8,11 +8,11 @@ import type { Agent, ToolCall } from './agent.js'
 import * as db from './db.js'
 import { FIELD_NAMES, objectLabel } from './labels.js'
 import { prepareFile } from './prepare.js'
-import { newObjectText } from './template.js'
+import { newEmptyText, newObjectText } from './template.js'
 import { validityOf } from './validity.js'
 import type { FileStore } from './uploader.js'
 import { SignedOut } from './api.js'
-import { Locked, type Backend, type Removed, type SessionRef, type User } from './backend.js'
+import { Locked, type Backend, type Removed, type RemoteContent, type RemoteErfassung, type SessionRef, type User } from './backend.js'
 
 /** A file that was dropped and hashed. It is identified by its SHA-256. */
 export interface FileRecord {
@@ -160,6 +160,12 @@ function refer(object: ObjectRecord): string {
   return typeof title === 'string' && title ? `Objekt „${title}“` : `Objekt ${object.number}`
 }
 
+/** True for an object whose content lives somewhere else (storage: external): it has no files of its own. */
+const isExternal = (text: string): boolean => readField(text, 'storage') === 'external'
+
+/** The only fields of a place that are kept from what the model sent. */
+const PLACE_KEYS = ['uri', 'site', 'type', 'reference', 'note', 'retrieved'] as const
+
 /** What is still missing in an object, in words for the user. */
 function missing(text: string): string[] {
   const found = validateObjectYaml(text).map((issue) => /missing field "(\w+)"/.exec(issue.message)?.[1] ?? issue.path.split('/')[1] ?? '')
@@ -214,6 +220,8 @@ export class Workspace {
   picked = $state(false)
   /** The last file clicked; its object is shown in the editor. */
   active = $state<string>()
+  /** The open object when it has no file to click on (it lives elsewhere). Only counts while no file is active. */
+  activeObjectId = $state<string>()
   saveState = $state<'saved' | 'saving' | 'failed'>('saved')
   /** SHA-256 of the files being dragged to an object or out of one; empty when nothing is dragged. */
   dragging = $state<string[]>([])
@@ -265,15 +273,28 @@ export class Workspace {
     this.#backend = backend
   }
 
+  /**
+   * The objects a chat message is about: those of the selected files, and the open object if it has no files
+   * (a new empty one, or one that lives elsewhere): it has nothing to select, so it is what the person is looking at.
+   */
+  get chatObjects(): ObjectRecord[] {
+    const ids = new Set(this.target.map((f) => f.objectId).filter((id): id is string => !!id))
+    const found = this.objects.filter((o) => ids.has(o.id))
+    const open = this.activeObject
+    if (open && !found.includes(open) && !this.files.some((f) => f.objectId === open.id)) found.push(open)
+    return found
+  }
+
   /** The files a chat message is about: the selected ones. Only the user selects. */
   get target(): FileRecord[] {
     return this.files.filter((f) => this.selection.includes(f.sha256))
   }
 
-  /** The object of the active file, if it has one. */
+  /** The open object: that of the active file, or one without files that was opened itself. */
   get activeObject(): ObjectRecord | undefined {
     const file = this.files.find((f) => f.sha256 === this.active)
-    return file?.objectId ? this.objects.find((o) => o.id === file.objectId) : undefined
+    if (file) return file.objectId ? this.objects.find((o) => o.id === file.objectId) : undefined
+    return this.activeObjectId ? this.objects.find((o) => o.id === this.activeObjectId) : undefined
   }
 
   /** The session that is shown. */
@@ -350,12 +371,14 @@ export class Workspace {
       this.sessions = sessions.sort((a, b) => a.createdAt - b.createdAt)
       this.objects = objects
       this.#adopt()
+      this.#repairLinks()
       this.currentId = this.sessions.find((s) => s.id === ui?.session)?.id ?? (this.sessions.find((s) => s.state === 'open') ?? this.sessions[0])?.id
       if (ui) {
         // Selection and open object as the user left them, as far as the files still exist.
         const known = new Set(files.map((f) => f.sha256))
         this.selection = ui.selection.filter((sha) => known.has(sha))
         this.active = ui.active && known.has(ui.active) ? ui.active : undefined
+        this.activeObjectId = ui.object && objects.some((o) => o.id === ui.object) ? ui.object : undefined
         this.#anchor = this.selection[0]
       }
       this.#schedule()
@@ -364,7 +387,23 @@ export class Workspace {
       this.saveState = 'failed'
     } finally {
       this.#loaded = true
-      this.#begin()
+      void this.#begin()
+    }
+  }
+
+  /**
+   * A file that is linked to an object whose YAML does not list it any more (changed by hand, or an older bug) is
+   * free again. Only a YAML that can be read and has a list of files counts, so that a half-typed text never matters.
+   */
+  #repairLinks() {
+    for (const file of this.files) {
+      const object = file.objectId ? this.objects.find((o) => o.id === file.objectId) : undefined
+      const listed = object ? readValue(object.text, 'files') : undefined
+      if (!object || !Array.isArray(listed)) continue
+      if (!listed.some((entry) => (entry as { sha256?: unknown } | null)?.sha256 === file.sha256)) {
+        file.objectId = undefined
+        this.#dirtyFiles.add(file.sha256)
+      }
     }
   }
 
@@ -415,6 +454,7 @@ export class Workspace {
     this.currentId = id
     this.selection = []
     this.active = undefined
+    this.activeObjectId = undefined
     this.#anchor = undefined
     this.picked = false
     this.#markUi()
@@ -485,6 +525,7 @@ export class Workspace {
     this.#removedSessions.add(id)
     this.selection = this.selection.filter((sha) => !shas.has(sha))
     if (this.active && shas.has(this.active)) this.active = undefined
+    if (this.activeObjectId && gone.some((o) => o.id === this.activeObjectId)) this.activeObjectId = undefined
     if (this.currentId === id) this.currentId = (this.sessions.find((s) => s.state === 'open') ?? this.sessions[0])?.id
     this.#markUi()
     this.#schedule()
@@ -499,11 +540,84 @@ export class Workspace {
    * stayed empty go away, and if nothing open is left, a fresh one is made, so that the person can start at once.
    * It exists only here, in the browser; the branch and the pull request come with the first saved object.
    */
-  #begin() {
+  async #begin() {
     if (this.#started || !this.#loaded || this.login.state !== 'user') return
     this.#started = true
+    // First what is on GitHub (on a new device that is all there is), then decide if a fresh session is needed.
+    await this.#restore()
     this.#dropAuto()
     this.#ensureOpen(false)
+    if (!this.current) this.currentId = [...this.sessions].reverse().find((s) => s.state === 'open')?.id ?? this.sessions[this.sessions.length - 1]?.id
+    this.#markUi()
+  }
+
+  /**
+   * The sessions of this person that are on GitHub (open or submitted) and not in this browser: made here again,
+   * with their objects and the files' previews. What is in the browser already is left alone, it is the working copy.
+   * Sessions of other people, accepted ones and closed ones (deleted here) are not fetched. Nothing happens if GitHub cannot be reached.
+   */
+  async #restore() {
+    if (this.login.state !== 'user') return
+    const me = this.login.user.login.replace(/[^A-Za-z0-9-]/g, '-') // as the branch name has it
+    let list
+    try {
+      list = await this.#backend.erfassungen()
+    } catch {
+      return
+    }
+    for (const remote of list.filter((e) => e.login === me && e.state !== 'merged' && !e.closed && !this.sessions.some((s) => s.id === e.slug))) {
+      try {
+        const content = await this.#backend.erfassung(remote.number)
+        // Somebody may have made it here while we waited.
+        if (this.sessions.some((s) => s.id === remote.slug)) continue
+        this.#bringBack(remote, content)
+      } catch (error) {
+        if (error instanceof SignedOut) return
+        this.#say('status', `Die Erfassung „${remote.name}“ konnte nicht aus GitHub geladen werden: ${(error as Error).message}`)
+      }
+    }
+  }
+
+  #bringBack(remote: RemoteErfassung, content: RemoteContent) {
+    const session: Session = { id: remote.slug, name: remote.name, state: remote.state, createdAt: Date.parse(remote.createdAt) || Date.now(), deleted: [] }
+    if (!remote.closed) {
+      session.pull = remote.number
+      session.url = remote.url
+    }
+    this.sessions.push(session)
+    this.sessions.sort((a, b) => a.createdAt - b.createdAt)
+    this.#dirtySessions.add(session.id)
+
+    let number = 0
+    for (const { id, text } of content.objects) {
+      this.objects.push({ id, number: ++number, text, updatedAt: Date.now(), sessionId: session.id, synced: text })
+      this.#dirtyObjects.add(id)
+      const entries = readValue(text, 'files')
+      for (const entry of Array.isArray(entries) ? (entries as FileEntry[]) : []) {
+        const sha256 = entry?.sha256
+        if (typeof sha256 !== 'string' || this.files.some((f) => f.sha256 === sha256)) continue
+        const name = typeof entry.original_name === 'string' ? entry.original_name : sha256.slice(0, 12)
+        this.files.push({ sha256, name, bytes: typeof entry.bytes === 'number' ? entry.bytes : 0, entry, status: 'uploaded', objectId: id, addedAt: Date.now() })
+        this.#dirtyFiles.add(sha256)
+        if (content.files) void this.#loadPreview(sha256, content.files, entry)
+      }
+    }
+    this.#schedule()
+    const n = content.objects.length
+    this.#say('status', `Die Erfassung „${session.name}“ wurde aus GitHub geladen (${n === 1 ? 'ein Objekt' : `${n} Objekte`}).`)
+  }
+
+  /** The preview of a restored file, from the bucket: its preview variant, or the file itself if it is an image that small. */
+  async #loadPreview(sha256: string, base: string, entry: FileEntry) {
+    const variants = Array.isArray(entry.variants) ? (entry.variants as { kind?: string; path?: string }[]) : []
+    const path = variants.find((v) => v.kind === 'preview')?.path ?? (typeof entry.mime === 'string' && entry.mime.startsWith('image/') ? entry.path : undefined)
+    if (typeof path !== 'string') return
+    const blob = await this.#backend.fetchFile(base, path)
+    const file = this.files.find((f) => f.sha256 === sha256)
+    if (!blob || !file) return
+    file.preview = blob
+    this.#dirtyFiles.add(sha256)
+    this.#schedule()
   }
 
   #dropAuto() {
@@ -587,6 +701,7 @@ export class Workspace {
       this.selection = [...batch.shas]
       this.#anchor = batch.shas[0]
       this.active = batch.shas[0]
+      this.activeObjectId = undefined
       this.#markUi()
       this.focusTick++
     }
@@ -693,6 +808,7 @@ export class Workspace {
     }
     this.leave()
     this.active = sha256
+    this.activeObjectId = undefined
     this.#markUi()
     this.focusTick++ // typing goes to the chat from here on
   }
@@ -700,12 +816,25 @@ export class Workspace {
   /** Selects all files of an object and shows it. This is what a click on the object's row does. */
   activate(objectId: string) {
     const files = this.files.filter((f) => f.objectId === objectId)
-    if (files.length === 0) return
+    if (files.length === 0) {
+      // An object without files (it lives elsewhere): nothing to select, the object itself is open.
+      if (!this.objects.some((o) => o.id === objectId)) return
+      this.leave()
+      this.selection = []
+      this.picked = false
+      this.#anchor = undefined
+      this.active = undefined
+      this.activeObjectId = objectId
+      this.#markUi()
+      this.focusTick++
+      return
+    }
     this.leave()
     this.selection = files.map((f) => f.sha256)
     this.picked = false // the object's files are selected, but dragging one tile moves only that one
     this.#anchor = files[0].sha256
     this.active = files[0].sha256
+    this.activeObjectId = undefined
     this.#markUi()
     this.focusTick++
   }
@@ -716,6 +845,7 @@ export class Workspace {
     this.leave()
     this.selection = []
     this.active = undefined
+    this.activeObjectId = undefined
     this.#anchor = undefined
     this.picked = false
     this.#markUi()
@@ -725,6 +855,7 @@ export class Workspace {
   collapse() {
     this.leave()
     this.active = undefined
+    this.activeObjectId = undefined
     this.#markUi()
     this.focusTick++
   }
@@ -771,14 +902,13 @@ export class Workspace {
     const notes: string[] = []
     const added: string[] = []
     const moved = new Map<ObjectRecord, string[]>()
-    const emptied = new Set<ObjectRecord>()
     for (const file of files) {
       const from = this.objects.find((o) => o.id === file.objectId)
       try {
         // Compute both new texts first, so that nothing is half done if one of them fails.
         const text = addFile(target.text, $state.snapshot(file.entry))
         const fromText = from ? removeFile(from.text, file.sha256) : undefined
-        if (from && fromText !== undefined) this.#leave(file, from, fromText, emptied)
+        if (from && fromText !== undefined) this.#leave(file, from, fromText)
         target.text = text
         target.updatedAt = Date.now()
         this.#markObject(target.id)
@@ -800,7 +930,6 @@ export class Workspace {
       log.push(`${count(list)} von Objekt ${from.number} nach Objekt ${target.number} verschoben.`)
       told.push(`Du hast ${them(list)} von ${refer(from)} nach ${refer(target)} verschoben.`)
     }
-    this.#discard(emptied, log, told)
     if (log.length) this.#say('log', log.join('\n'))
     if (told.length || notes.length) this.#say('assistant', [...told, ...notes].join(' '))
     this.activate(objectId)
@@ -810,15 +939,18 @@ export class Workspace {
   removeObject(id: string) {
     const object = this.objects.find((o) => o.id === id)
     if (!object || !this.writable(object)) return
-    const shas = this.files.filter((f) => f.objectId === id).map((f) => f.sha256)
-    if (shas.length > 0) return this.detach(shas)
-    const told: string[] = []
-    const log: string[] = []
-    this.#discard(new Set([object]), log, told)
-    this.#say('assistant', told.join(' '))
+    const freed = this.files.filter((f) => f.objectId === id)
+    for (const file of freed) {
+      file.objectId = undefined
+      this.#mark(file.sha256)
+    }
+    if (this.activeObjectId === id) this.activeObjectId = undefined
+    if (freed.length > 0) this.#deselect()
+    this.#discard(object)
+    this.#say('assistant', `${refer(object)} wurde gelöscht.${freed.length > 0 ? ' Die Dateien sind wieder frei.' : ''}`)
   }
 
-  /** Takes files out of their objects. An object without files is deleted. */
+  /** Takes files out of their objects. An object that has no file left stays; it can be deleted. */
   detach(shas: string[]) {
     const files = this.files.filter((f) => {
       const owner = shas.includes(f.sha256) && f.objectId ? this.objects.find((o) => o.id === f.objectId) : undefined
@@ -827,14 +959,16 @@ export class Workspace {
     if (files.length === 0) return
     const log: string[] = []
     const notes: string[] = []
-    const emptied = new Set<ObjectRecord>()
     const freed: FileRecord[] = []
     const from = new Map<ObjectRecord, string[]>()
     for (const file of files) {
       const object = this.objects.find((o) => o.id === file.objectId)
       if (!object) continue
       try {
-        this.#leave(file, object, removeFile(object.text, file.sha256), emptied)
+        // If the YAML does not list the file (any more), only the link is cut.
+        const listed = readValue(object.text, 'files')
+        const inYaml = Array.isArray(listed) && listed.some((entry) => (entry as { sha256?: unknown } | null)?.sha256 === file.sha256)
+        this.#leave(file, object, inYaml ? removeFile(object.text, file.sha256) : object.text)
         freed.push(file)
         from.set(object, [...(from.get(object) ?? []), file.name])
       } catch (error) {
@@ -846,48 +980,45 @@ export class Workspace {
       log.unshift(`${count(list)} aus Objekt ${object.number} herausgenommen.`)
       told.push(`Du hast ${them(list)} aus dem ${refer(object)} herausgenommen.`)
     }
-    this.#discard(emptied, log, told)
     if (log.length) this.#say('log', log.join('\n'))
     if (told.length || notes.length) this.#say('assistant', [...told, ...notes].join(' '))
-    if (freed.length) {
-      this.picked = false
-      this.selection = freed.map((f) => f.sha256)
-      this.#anchor = freed[0].sha256
-      this.active = freed[0].sha256
-      this.#markUi()
-      this.focusTick++
-    }
+    if (freed.length) this.#deselect()
   }
 
-  /** The file leaves its object; `text` is the object's new YAML. Notes the object if it has no file left. */
-  #leave(file: FileRecord, from: ObjectRecord, text: string, emptied: Set<ObjectRecord>) {
+  /** Nothing is selected and no object is open: what was just taken out of an object must not look picked. */
+  #deselect() {
+    this.picked = false
+    this.selection = []
+    this.#anchor = undefined
+    this.active = undefined
+    this.activeObjectId = undefined
+    this.#markUi()
+    this.focusTick++
+  }
+
+  /** The file leaves its object; `text` is the object's new YAML. */
+  #leave(file: FileRecord, from: ObjectRecord, text: string) {
     from.text = text
     from.updatedAt = Date.now()
     this.#markObject(from.id)
     file.objectId = undefined
     this.#mark(file.sha256)
-    if (!this.files.some((f) => f.objectId === from.id)) emptied.add(from)
   }
 
-  #discard(emptied: Set<ObjectRecord>, lines: string[], told: string[]) {
-    for (const object of emptied) {
-      told.push(`${refer(object)} hat keine Dateien mehr und wurde gelöscht.`)
-      this.objects = this.objects.filter((o) => o.id !== object.id)
-      this.#dirtyObjects.delete(object.id)
-      this.#removedObjects.add(object.id)
-      // If it is on the branch (or on its way there), the next save removes it from there.
-      const session = this.#sessionOf(object)
-      if (session && (object.synced !== undefined || this.#syncing)) {
-        const title = readField(object.text, 'title')
-        session.deleted.push({ id: object.id, title: typeof title === 'string' ? title : undefined })
-        this.#dirtySessions.add(session.id)
-      }
-      lines.push(`Objekt ${object.number} hat keine Dateien mehr und wurde gelöscht.`)
+  /** Takes an object out of the session. If it is on the branch (or on its way there), the next save removes it from there. */
+  #discard(object: ObjectRecord) {
+    this.objects = this.objects.filter((o) => o.id !== object.id)
+    this.#dirtyObjects.delete(object.id)
+    this.#removedObjects.add(object.id)
+    const session = this.#sessionOf(object)
+    if (session && (object.synced !== undefined || this.#syncing)) {
+      const title = readField(object.text, 'title')
+      session.deleted.push({ id: object.id, title: typeof title === 'string' ? title : undefined })
+      this.#dirtySessions.add(session.id)
     }
-    if (emptied.size > 0) {
-      this.#schedule()
-      this.#syncAfterApp()
-    }
+    this.#say('log', `Objekt ${object.number} gelöscht.`)
+    this.#schedule()
+    this.#syncAfterApp()
   }
 
   // --- chat: the user writes, the agent answers with tool calls, the workspace carries them out ---
@@ -909,7 +1040,7 @@ export class Workspace {
       .map((m) => ({ role: m.role === 'user' ? ('user' as const) : ('assistant' as const), text: m.text }))
     this.#say('user', text)
     const target = this.target
-    const selected = [...new Set(target.map((f) => f.objectId))].flatMap((id) => this.objects.filter((o) => o.id === id))
+    const selected = this.chatObjects
     const objects = selected.map((o) => ({
       number: o.number,
       text: o.text,
@@ -1045,6 +1176,7 @@ export class Workspace {
   }
 
   #create(call: Extract<ToolCall, { tool: 'create_object' }>, target: FileRecord[], out: Out): ObjectRecord[] {
+    if (call.external && call.external.length > 0) return this.#createExternal(call, out)
     const free = target.filter((f) => !f.objectId)
     if (free.length === 0) {
       out.notes.push(target.length === 0 ? 'Wähle zuerst eine oder mehrere Dateien aus.' : 'Die Dateien gehören schon zu einem Objekt.')
@@ -1098,6 +1230,63 @@ export class Workspace {
     return created
   }
 
+  /** An object that lives elsewhere: no files, only the places where it can be found. */
+  #createExternal(call: Extract<ToolCall, { tool: 'create_object' }>, out: Out): ObjectRecord[] {
+    const session = this.#openSession()
+    if (!session) {
+      out.notes.push(this.#frozen())
+      return []
+    }
+    const places = (call.external ?? [])
+      .map((place) => Object.fromEntries(PLACE_KEYS.flatMap((key) => (typeof place?.[key] === 'string' && place[key] ? [[key, place[key]]] : []))))
+      .filter((place) => Object.keys(place).length > 0)
+    if (places.length === 0) return []
+
+    const id = ulid()
+    const number = Math.max(0, ...this.objects.filter((o) => o.sessionId === session.id).map((o) => o.number)) + 1
+    let text = newObjectText(id, call.type, call.subtype)
+    const applied: string[] = []
+    const fields: Record<string, unknown> = { ...(call.fields ?? {}), storage: 'external', external: places }
+    for (const [field, value] of Object.entries(fields)) {
+      const result = setField(text, field, value, undefined)
+      if (result.ok) {
+        text = result.text
+        if (field !== 'storage') applied.push(FIELD_NAMES[field] ?? field)
+      }
+    }
+    this.objects.push({ id, number, text, updatedAt: Date.now(), sessionId: session.id })
+    this.#markObject(id)
+    const object = this.objects[this.objects.length - 1]
+
+    const what = `${objectLabel(call.type, call.subtype)}, extern`
+    const open = missing(object.text)
+    out.log.push(`Objekt ${number} angelegt: ${what}.${open.length ? ` Es fehlt noch: ${open.join(', ')}.` : ''}`)
+    const change = this.#change(out, object)
+    change.created = what
+    change.set.push(...applied)
+    return [object]
+  }
+
+  /** The "+" above the objects: an empty object, opened and ready to be described (with or without files). */
+  addObject() {
+    const session = this.#openSession()
+    if (!session) {
+      this.#say('assistant', this.#frozen())
+      return
+    }
+    const id = ulid()
+    const number = Math.max(0, ...this.objects.filter((o) => o.sessionId === session.id).map((o) => o.number)) + 1
+    this.objects.push({ id, number, text: newEmptyText(id), updatedAt: Date.now(), sessionId: session.id })
+    this.#markObject(id)
+    this.#say('log', `Objekt ${number} angelegt.`)
+    this.activate(id)
+  }
+
+  /** Why nothing can be added to the shown session. */
+  #frozen(): string {
+    return `Die Erfassung „${this.current?.name}“ ist ${this.current?.state === 'merged' ? 'übernommen' : 'eingereicht'}. Wähle oben eine andere Erfassung oder lege eine neue an.`
+  }
+
   #patch(call: Extract<ToolCall, { tool: 'patch' }>, out: Out): ObjectRecord | undefined {
     const object = this.shown.find((o) => o.number === call.object)
     if (!object) {
@@ -1130,7 +1319,18 @@ export class Workspace {
    */
   #settle(objects: ObjectRecord[]) {
     const files = this.files.filter((f) => objects.some((o) => o.id === f.objectId))
-    if (files.length === 0) return
+    if (files.length === 0) {
+      // Objects that live elsewhere have no files: the first of them is shown.
+      const first = objects.find((o) => isExternal(o.text))
+      if (!first) return
+      this.selection = []
+      this.active = undefined
+      this.activeObjectId = first.id
+      this.#anchor = undefined
+      this.#markUi()
+      return
+    }
+    this.activeObjectId = undefined
     this.active = files[0].sha256
     this.selection = files.map((f) => f.sha256)
     this.#anchor = files[0].sha256
@@ -1203,7 +1403,7 @@ export class Workspace {
       const plainFiles = files.map((f) => ({ ...$state.snapshot(f), progress: undefined }))
       await db.save(plainFiles, objects.map((o) => $state.snapshot(o)), chat ? $state.snapshot(this.chat.slice(-200)) : undefined,
         removed,
-        ui ? { selection: $state.snapshot(this.selection), active: this.active, session: this.currentId } : undefined,
+        ui ? { selection: $state.snapshot(this.selection), active: this.active, object: this.activeObjectId, session: this.currentId } : undefined,
         removedFiles,
         sessions.map((s) => $state.snapshot(s)),
         removedSessions,
@@ -1227,7 +1427,7 @@ export class Workspace {
       const user = await this.#backend.me()
       this.login = user ? { state: 'user', user } : { state: 'anonymous', notice }
       if (user) {
-        this.#begin()
+        void this.#begin()
         this.#syncAfterApp()
         void this.checkPulls()
       }
@@ -1302,12 +1502,12 @@ export class Workspace {
   }
 
   /**
-   * Commands typed into the chat. `/clear` starts again with an empty browser, but only in development;
-   * `/clear!` does so everywhere (it is not documented). Returns whether the text was a command.
+   * Commands typed into the chat. `/clear!` starts again with an empty browser (it is not documented; the
+   * exclamation mark is there so that nobody types it by accident). Returns whether the text was a command.
    */
   command(text: string): boolean {
     const word = text.trim()
-    if (word === '/clear!' || (import.meta.env.DEV && word === '/clear')) {
+    if (word === '/clear!') {
       void this.resetAll()
       return true
     }

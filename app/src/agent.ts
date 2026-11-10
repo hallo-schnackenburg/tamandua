@@ -6,6 +6,16 @@
 
 import { readValue, type ObjectType } from '@tamandua/core'
 
+/** One place outside of our store where an object's content can be found. */
+export interface ExternalPlace {
+  uri?: string
+  site?: string
+  type?: string
+  reference?: string
+  note?: string
+  retrieved?: string
+}
+
 export interface AgentFile {
   sha256: string
   name: string
@@ -40,6 +50,8 @@ export type ToolCall =
       /** Documents: all files are pages of one object (default); false: one object per file. */
       together?: boolean
       fields?: Record<string, unknown>
+      /** The object lives elsewhere: it needs no files, only where it can be found. */
+      external?: ExternalPlace[]
     }
   /** Changes one field. `old` is the value the agent saw; if the user changed it since, the call is skipped. */
   | { tool: 'patch'; object: number; field: string; value: unknown; old?: unknown }

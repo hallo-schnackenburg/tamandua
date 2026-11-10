@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { handle, type Env } from '../src/index.js'
-import { bodyOf, branchOf, messageOf, parseSessionRef, titleOf } from '../src/repo.js'
+import { bodyOf, branchOf, erfassungenOf, markerOf, messageOf, parseSessionRef, titleOf } from '../src/repo.js'
 import { authEnv, cookieOf, fakeGitHub } from './support.js'
 
 const env: Env = { ...authEnv }
@@ -313,5 +313,82 @@ describe('GET /repo/pull', () => {
     const response = await handle(new Request('http://worker/api/repo/pull/abc', { headers: { cookie } }), env, gh.fn)
     expect(response.status).toBe(404)
     expect(gh.mock).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('GET /repo/erfassungen and /repo/erfassung/<n>', () => {
+  const get = (path: string) => handle(new Request(`http://worker/api${path}`, { headers: { cookie } }), env, gh.fn)
+  let gh: ReturnType<typeof fakeGitHub>
+
+  it('lists the sessions of everybody, and only sessions', async () => {
+    gh = fakeGitHub()
+    await saveOf(gh, objects(ID_A)) // anna's session, a draft
+    gh.state.refs['erfassung/bernd/protokolle-9zzz'] = 'c0'
+    gh.state.pulls.push({ number: 90, head: 'erfassung/bernd/protokolle-9zzz', state: 'open', merged: false, draft: false, title: 'Protokolle (Bernd, 08.11.2026, 10:00)', body: bodyOf('bernd', { slug: 'protokolle-9zzz', name: 'Protokolle' }) })
+    gh.state.refs['feature/something'] = 'c0'
+    gh.state.pulls.push({ number: 91, head: 'feature/something', state: 'open', merged: false, draft: false, title: 'Not a session', body: '' })
+
+    const response = await get('/repo/erfassungen')
+    expect(response.status).toBe(200)
+    const { erfassungen } = (await response.json()) as { erfassungen: { number: number; state: string; login: string; slug: string; name: string }[] }
+    expect(erfassungen.map((e) => [e.login, e.slug, e.name, e.state])).toEqual([
+      ['bernd', 'protokolle-9zzz', 'Protokolle', 'submitted'],
+      ['anna', 'dachbodenfund-postkarten-4k2x', 'Dachbodenfund Postkarten', 'open'],
+    ])
+    expect(gh.state.calls.every((c) => c.auth === 'Bearer ghu_anna')).toBe(true)
+  })
+
+  it('takes the state from the pull request: draft is open, ready is submitted, merged is merged, closed unmerged is open again', () => {
+    const pull = (over: object) => ({ number: 1, html_url: 'u', state: 'open' as const, merged_at: null, draft: true, title: 'Name (Anna, 01.01.2026, 10:00)', body: null, created_at: 't', head: { ref: 'erfassung/anna/name-1', sha: 's' }, ...over })
+    const states = [{}, { draft: false }, { state: 'closed', merged_at: 'x', draft: false }, { state: 'closed', draft: false }].map((o) => erfassungenOf([pull(o)])[0].state)
+    expect(states).toEqual(['open', 'submitted', 'merged', 'open'])
+    // Without the marker the name is the title without the person and date.
+    expect(erfassungenOf([pull({})])[0].name).toBe('Name')
+  })
+
+  it('reads the marker back that bodyOf wrote, also when the name has dashes', () => {
+    const marker = { slug: 'x-1', name: 'A -- B <!-- c' }
+    expect(markerOf(bodyOf('anna', marker))).toEqual(marker)
+    expect(markerOf('nothing here')).toBeUndefined()
+    expect(markerOf(null)).toBeUndefined()
+  })
+
+  it('tells what a session changed: its objects, where to read them, at which commit', async () => {
+    gh = fakeGitHub()
+    const saved = (await (await saveOf(gh, objects(ID_A, ID_B))).json()) as { commit: string; pull: { number: number } }
+    const response = await get(`/repo/erfassung/${saved.pull.number}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      head: saved.commit,
+      raw: `https://raw.githubusercontent.com/verein/archiv-data/${saved.commit}`,
+      objects: [
+        { id: ID_A, path: `objects/HJ/${ID_A}.yaml`, status: 'added' },
+        { id: ID_B, path: `objects/HJ/${ID_B}.yaml`, status: 'added' },
+      ],
+    })
+  })
+
+  it('leaves out an object that was added and removed again within the session', async () => {
+    gh = fakeGitHub()
+    await saveOf(gh, objects(ID_A, ID_B))
+    const second = (await (await saveOf(gh, { session, objects: [], deleted: [{ id: ID_B, title: 'Brief' }] })).json()) as { pull: { number: number } }
+    const response = await get(`/repo/erfassung/${second.pull.number}`)
+    const { objects: list } = (await response.json()) as { objects: { id: string }[] }
+    expect(list.map((o) => o.id)).toEqual([ID_A])
+  })
+
+  it('names the bucket the files can be read from, when the Worker knows it', async () => {
+    gh = fakeGitHub()
+    const saved = (await (await saveOf(gh, objects(ID_A))).json()) as { pull: { number: number } }
+    const withStorage = { ...env, S3_ENDPOINT: 'https://nbg1.your-objectstorage.com', S3_BUCKET: 'archiv-test', S3_ACCESS_KEY_ID: 'k', S3_SECRET_ACCESS_KEY: 's' }
+    const response = await handle(new Request(`http://worker/api/repo/erfassung/${saved.pull.number}`, { headers: { cookie } }), withStorage, gh.fn)
+    expect(((await response.json()) as { files: string }).files).toBe('https://archiv-test.nbg1.your-objectstorage.com')
+  })
+
+  it('refuses without a sign-in and for a pull request that is not there', async () => {
+    gh = fakeGitHub()
+    expect((await handle(new Request('http://worker/api/repo/erfassungen'), env, gh.fn)).status).toBe(401)
+    expect((await get('/repo/erfassung/999')).status).toBe(502)
   })
 })

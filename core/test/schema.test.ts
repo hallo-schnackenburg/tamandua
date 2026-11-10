@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { validateObject } from '../src/schema.js'
-import { clone, file, letter, photo, preview, sha } from './fixtures.js'
+import { clone, external, file, letter, photo, preview, sha } from './fixtures.js'
 
 type Obj = Record<string, any>
 
@@ -14,6 +14,83 @@ function messages(base: Obj, change: (o: Obj) => void): string[] {
 describe('valid objects', () => {
   it('accepts a photo', () => expect(validateObject(photo())).toEqual([]))
   it('accepts a multi-page letter', () => expect(validateObject(letter())).toEqual([]))
+  it('accepts an object that lives elsewhere', () => expect(validateObject(external())).toEqual([]))
+})
+
+describe('storage', () => {
+  it('is local by default, and then the files are needed', () => {
+    expect(messages(photo(), (o) => delete o.files)).toContain('/: missing field "files"')
+    expect(messages(photo(), (o) => (o.storage = 'local'))).toEqual([])
+  })
+
+  it('knows local and external', () => {
+    expect(messages(photo(), (o) => (o.storage = 'remote'))[0]).toMatch(/must be one of: local, external/)
+  })
+
+  it('does not allow "external" on a local object', () => {
+    const entry = external().external
+    expect(messages(photo(), (o) => (o.external = entry))).toContain('/external: only allowed when storage is "external"')
+  })
+})
+
+describe('external', () => {
+  it('needs the list of places', () => {
+    expect(messages(external(), (o) => delete o.external)).toContain('/: missing field "external"')
+  })
+
+  it('needs at least one place', () => {
+    expect(messages(external(), (o) => (o.external = [])).length).toBeGreaterThan(0)
+  })
+
+  it('may have several places', () => {
+    expect(
+      messages(external(), (o) => o.external.push({ type: 'platform', site: 'YouTube', uri: 'https://www.youtube.com/watch?v=x' })),
+    ).toEqual([])
+  })
+
+  it('needs no particular detail of a place, the address may not be known', () => {
+    expect(messages(external(), (o) => (o.external = [{ uri: 'https://example.org/a' }]))).toEqual([])
+    expect(messages(external(), (o) => (o.external = [{ site: 'Wendlandarchiv' }]))).toEqual([])
+    expect(messages(external(), (o) => delete o.external[0].uri)).toEqual([])
+  })
+
+  it('takes a note on a place', () => {
+    expect(messages(external(), (o) => (o.external[0].note = 'Seite 12, unter „Fähre“'))).toEqual([])
+    expect(messages(external(), (o) => (o.external[0].note = '')).length).toBeGreaterThan(0)
+  })
+
+  it('does not take an empty place', () => {
+    expect(messages(external(), (o) => (o.external = [{}])).length).toBeGreaterThan(0)
+  })
+
+  it('wants a web address', () => {
+    expect(messages(external(), (o) => (o.external[0].uri = 'Arcinsys Nr. 5'))).toEqual([
+      '/external/0/uri: must be a web address starting with http:// or https://',
+    ])
+  })
+
+  it('wants a real day for retrieved', () => {
+    expect(messages(external(), (o) => (o.external[0].retrieved = '2026-13-40')).length).toBeGreaterThan(0)
+    expect(messages(external(), (o) => (o.external[0].retrieved = 'gestern')).length).toBeGreaterThan(0)
+  })
+
+  it('reports a misspelled field of a place', () => {
+    expect(messages(external(), (o) => (o.external[0].url = 'x'))).toContain('/external/0/url: unknown field "url"')
+  })
+
+  it('takes a thumbnail or a screenshot as files, but not a main file', () => {
+    expect(messages(external(), (o) => (o.files = [file('screenshot', 'a')]))).toEqual([])
+    expect(messages(external(), (o) => (o.files = [file('thumbnail', 'a')]))).toEqual([])
+    expect(messages(external(), (o) => (o.files = [file('main', 'a')]))).toContain(
+      '/files/0/role: must be one of: thumbnail, screenshot',
+    )
+  })
+
+  it('still wants the document fields to be right', () => {
+    expect(messages(external(), (o) => (o.recipient = 'x'))).toContain('/recipient: unknown field "recipient"')
+    const doc = () => ({ ...external(), type: 'document', subtype: 'letter', recipient: 'Anna', language: 'de' })
+    expect(messages(doc(), () => {})).toEqual([])
+  })
 })
 
 describe('original_name', () => {

@@ -36,7 +36,9 @@ export function addFile(text: string, entry: FileEntry): string {
     full = { role: 'page', num: Math.max(0, ...nums) + 1, ...entry }
   }
 
-  if (isSeq(existing)) existing.add(doc.createNode(full))
+  // An empty list (`files: []`, left when the last file was taken out) is replaced, not extended: it is written in
+  // flow style and the new files would inherit that.
+  if (isSeq(existing) && existing.items.length > 0) existing.add(doc.createNode(full))
   else doc.set('files', doc.createNode([full]))
   return doc.toString()
 }
@@ -67,7 +69,10 @@ export type SetFieldResult =
   /** Not changed, because the field no longer has the value the caller expected. */
   | { ok: false; current: unknown }
 
-/** These cannot be changed with `setField`: they are tied to the files. */
+/**
+ * These cannot be changed with `setField`: they are tied to the files. The type is only locked once the object
+ * has files (they depend on it); an object without files, e.g. a new empty one, may still get its type.
+ */
 const LOCKED = new Set(['id', 'type', 'files'])
 
 const isEmpty = (value: unknown): boolean =>
@@ -81,10 +86,15 @@ const isEmpty = (value: unknown): boolean =>
  * field. A new field is placed before `files`; a date is always written in quotes.
  */
 export function setField(text: string, field: string, value: unknown, old: unknown): SetFieldResult {
-  if (LOCKED.has(field)) throw new Error(`The field "${field}" cannot be changed this way.`)
+  const locked = () => new Error(`The field "${field}" cannot be changed this way.`)
+  if (LOCKED.has(field) && field !== 'type') throw locked()
   const doc = parseDocument(text)
   if (doc.errors.length > 0 || !isMap(doc.contents)) {
     throw new Error('The YAML has a syntax error; fix it first.')
+  }
+  if (field === 'type') {
+    const files = doc.get('files')
+    if (isSeq(files) && files.items.length > 0) throw locked()
   }
 
   const current = (doc.toJS() as Record<string, unknown>)[field]

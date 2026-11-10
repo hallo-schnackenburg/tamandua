@@ -33,12 +33,29 @@
 
   // Selected files without an object: a row "new object" stands in for it, below the others.
 
+  // Where an object that lives elsewhere can be found: the name of the first place, else its host.
+  function placeOf(list: unknown): string {
+    const first = Array.isArray(list) ? (list[0] as { site?: unknown; uri?: unknown } | null) : undefined
+    if (typeof first?.site === 'string' && first.site) return first.site
+    if (typeof first?.uri === 'string') {
+      try {
+        return new URL(first.uri).hostname.replace(/^www\./, '')
+      } catch {
+        return ''
+      }
+    }
+    return ''
+  }
+
   // What a closed row shows.
   function summary(object: ObjectRecord) {
     const type = readField(object.text, 'type')
     const date = readValue(object.text, 'date')
     const files = ws.files.filter((f) => f.objectId === object.id).length
+    const external = readField(object.text, 'storage') === 'external'
     return {
+      external,
+      place: external ? placeOf(readValue(object.text, 'external')) : '',
       title: readField(object.text, 'title'),
       kind: objectLabel(type, readField(object.text, 'subtype')),
       date: date === undefined || date === null ? '' : String(date),
@@ -97,8 +114,12 @@
         <span class="main">
           <span class="title" class:empty={!info.title}>{info.title || `Objekt ${object.number}`}</span>
           <span class="sub">
-            {info.date ? `${info.date} · ` : ''}{info.files}
-            {info.files === 1 ? 'Datei' : 'Dateien'}
+            {#if info.external}
+              {info.date ? `${info.date} · ` : ''}extern{info.place ? `: ${info.place}` : ''}
+            {:else}
+              {info.date ? `${info.date} · ` : ''}{info.files}
+              {info.files === 1 ? 'Datei' : 'Dateien'}
+            {/if}
           </span>
         </span>
         <!-- The type is what the row says; the standing only takes its place while there is something to report. -->
@@ -144,7 +165,7 @@
   {#if ws.shown.length === 0}
     <p class="empty-state">
       <span>Keine Objekte</span>
-      <small>{ws.current && ws.current.state !== 'open' ? 'Diese Erfassung ist leer.' : 'Lege Dateien ab und beschreibe sie.'}</small>
+      <small>{ws.current && ws.current.state !== 'open' ? 'Diese Erfassung ist leer.' : 'Lege Dateien ab und beschreibe sie, oder füge mit + ein leeres Objekt hinzu.'}</small>
     </p>
   {/if}
 </div>
@@ -182,6 +203,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border-top: 1px solid #eee; }
   .issues { margin: 0; padding: 6px 10px; list-style: none; font-size: 0.9rem; border-top: 1px solid #eee; max-height: 8rem; overflow: auto; }
-  .issues li { padding: 2px 0; color: #a11; }
-  code { background: #eee; padding: 0 4px; border-radius: var(--r-s); }
+  /* Quiet on purpose: while capturing, almost every object has something missing. */
+  .issues li { padding: 2px 0; color: #a39494; }
+  code { background: #f1efef; padding: 0 4px; border-radius: var(--r-s); }
 </style>

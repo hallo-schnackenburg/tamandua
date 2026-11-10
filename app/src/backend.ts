@@ -20,6 +20,28 @@ export interface Pull {
   draft?: boolean
 }
 
+/** A session as GitHub knows it (a pull request on a branch erfassung/<login>/<slug>). */
+export interface RemoteErfassung {
+  number: number
+  url: string
+  state: 'open' | 'submitted' | 'merged'
+  /** Closed without being merged: its branch is there, but its pull request is not open any more. */
+  closed: boolean
+  login: string
+  slug: string
+  name: string
+  createdAt: string
+  head: string
+}
+
+/** What a session holds on GitHub: its objects (YAML text) and where to read the files' previews from. */
+export interface RemoteContent {
+  head: string
+  /** The address of the bucket's files, if the Worker knows it. */
+  files?: string
+  objects: { id: string; text: string }[]
+}
+
 /** What the Worker needs to know of a session: the branch is made from `slug`, the pull request is titled with `name`. */
 export interface SessionRef {
   slug: string
@@ -59,12 +81,20 @@ export interface Backend {
   /** Gives the pull request of the session its new name, if it has one. */
   rename(session: SessionRef): Promise<void>
   pull(number: number): Promise<Pull>
+  /** The sessions of everybody (newest first, up to a hundred). */
+  erfassungen(): Promise<RemoteErfassung[]>
+  /** The objects of one session, with their text. */
+  erfassung(number: number): Promise<RemoteContent>
+  /** A file from the bucket (a preview), or undefined if it cannot be had. */
+  fetchFile(base: string, path: string): Promise<Blob | undefined>
   logout(): Promise<void>
   /** Where the browser goes to sign in. */
   readonly loginUrl: string
 }
 
 const MAX_PER_SAVE = 50
+/** How many objects are read from GitHub at once. */
+const READ_PARALLEL = 6
 
 export class HttpBackend implements Backend {
   #url: string
@@ -127,6 +157,42 @@ export class HttpBackend implements Backend {
     const data = await jsonOf<Pull>(response)
     if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
     return data
+  }
+
+  async erfassungen(): Promise<RemoteErfassung[]> {
+    const response = await request(`${this.#url}/repo/erfassungen`)
+    const data = await jsonOf<{ erfassungen: RemoteErfassung[] }>(response)
+    if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+    return data.erfassungen
+  }
+
+  async erfassung(number: number): Promise<RemoteContent> {
+    const response = await request(`${this.#url}/repo/erfassung/${number}`)
+    const data = await jsonOf<{ head: string; raw: string; files?: string; objects: { id: string; path: string; status: string }[] }>(response)
+    if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+    // The texts are read from GitHub directly, at the commit: a public address that never changes its content.
+    const wanted = data.objects.filter((o) => o.status !== 'removed')
+    const objects: { id: string; text: string }[] = []
+    let next = 0
+    const worker = async () => {
+      while (next < wanted.length) {
+        const object = wanted[next++]
+        const text = await fetch(`${data.raw}/${object.path}`)
+        if (!text.ok) throw new Error(`Objekt ${object.id} konnte nicht gelesen werden (${text.status}).`)
+        objects.push({ id: object.id, text: await text.text() })
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(READ_PARALLEL, wanted.length) }, worker))
+    return { head: data.head, files: data.files, objects: objects.sort((a, b) => a.id.localeCompare(b.id)) }
+  }
+
+  async fetchFile(base: string, path: string): Promise<Blob | undefined> {
+    try {
+      const response = await fetch(`${base.replace(/\/$/, '')}/${path}`)
+      return response.ok ? await response.blob() : undefined
+    } catch {
+      return undefined
+    }
   }
 
   async logout(): Promise<void> {
@@ -195,6 +261,29 @@ export class FakeBackend implements Backend {
 
   async pull(number: number): Promise<Pull> {
     return { number, url: `https://example.org/pull/${number}`, state: this.merged || this.closed ? 'closed' : 'open', merged: this.merged, draft: false }
+  }
+
+  async erfassungen(): Promise<RemoteErfassung[]> {
+    return [...this.branches.keys()].map((slug) => ({
+      ...this.#pullOf(slug),
+      state: this.submitted.has(slug) ? ('submitted' as const) : ('open' as const),
+      closed: false,
+      login: 'test',
+      slug,
+      name: this.names.get(slug) ?? slug,
+      createdAt: new Date().toISOString(),
+      head: 'fake',
+    }))
+  }
+
+  async erfassung(number: number): Promise<RemoteContent> {
+    const slug = [...this.branches.keys()].find((s) => this.#pullOf(s).number === number)
+    const branch = slug ? this.branches.get(slug) : undefined
+    return { head: 'fake', objects: [...(branch ?? [])].map(([id, text]) => ({ id, text })).sort((a, b) => a.id.localeCompare(b.id)) }
+  }
+
+  async fetchFile(): Promise<Blob | undefined> {
+    return undefined
   }
 
   async logout(): Promise<void> {

@@ -4,13 +4,14 @@
   "title": "Archive object",
   "description": "Metadata of one archive object (an image, a document, ...). One YAML file per object. Files (scans, videos, OCR text, ...) live in the object store and are described in YAML files.",
   "type": "object",
-  "required": ["id", "type", "title", "files"],
+  "required": ["id", "type", "title"],
 
   "allOf": [
     { "$ref": "#/$defs/common" },
     {
-      "if": { "properties": { "type": { "const": "image" } }, "required": ["type"] },
-      "then": { "$ref": "#/$defs/image" }
+      "if": { "properties": { "storage": { "const": "external" } }, "required": ["storage"] },
+      "then": { "$ref": "#/$defs/stored_elsewhere" },
+      "else": { "$ref": "#/$defs/stored_here" }
     },
     {
       "if": { "properties": { "type": { "const": "document" } }, "required": ["type"] },
@@ -66,8 +67,68 @@
           "description": "Internal notes of the person capturing the object.",
           "type": "string"
         },
+        "storage": {
+          "description": "Where the content of the object lives: 'local' (default, in our object store, described by files) or 'external' (somewhere else, described by external).",
+          "enum": ["local", "external"]
+        },
+        "external": {
+          "description": "Where the content is, if it is not here (storage: external). One entry per place.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/external_entry" }
+        },
         "files": { "type": "array" }
       }
+    },
+
+    "stored_here": {
+      "description": "The content lives in our object store (storage: local, the default): the files are the object.",
+      "required": ["files"],
+      "properties": { "external": false },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "image" } }, "required": ["type"] },
+          "then": { "properties": { "files": { "$ref": "#/$defs/image_files" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "document" } }, "required": ["type"] },
+          "then": { "properties": { "files": { "$ref": "#/$defs/document_files" } } }
+        }
+      ]
+    },
+
+    "stored_elsewhere": {
+      "description": "The content lives somewhere else (storage: external). Files are optional and only accompany it, e.g. a thumbnail or a screenshot of the page; they are not the object.",
+      "required": ["external"],
+      "properties": {
+        "files": {
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/file" },
+              { "properties": { "role": { "enum": ["thumbnail", "screenshot"] } } }
+            ]
+          }
+        }
+      }
+    },
+
+    "external_entry": {
+      "description": "One place outside of our store where the content can be found. Everything is optional (the address may not be known yet), but an entry says at least something.",
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "type": {
+          "description": "What kind of place it is, e.g. archive or platform. The values are listed in archive.yaml.",
+          "type": "string",
+          "minLength": 1
+        },
+        "site": { "description": "Name of the archive or platform, e.g. Arcinsys, YouTube.", "type": "string", "minLength": 1 },
+        "uri": { "description": "Link to the object or to its catalogue entry.", "type": "string", "pattern": "^https?://\\S+$" },
+        "reference": { "description": "Call number or id at that place.", "type": "string", "minLength": 1 },
+        "note": { "description": "Free text about this place, e.g. where in it to look.", "type": "string", "minLength": 1 },
+        "retrieved": { "description": "The day somebody last saw the content there (YYYY-MM-DD).", "type": "string", "format": "date" }
+      },
+      "additionalProperties": false
     },
 
     "entity": {
@@ -84,20 +145,16 @@
       "additionalProperties": false
     },
 
-    "image": {
-      "properties": {
-        "files": {
-          "description": "Exactly one file with the role 'main'.",
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 1,
-          "items": {
-            "allOf": [
-              { "$ref": "#/$defs/file" },
-              { "properties": { "role": { "const": "main" } } }
-            ]
-          }
-        }
+    "image_files": {
+      "description": "Exactly one file with the role 'main'.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/file" },
+          { "properties": { "role": { "const": "main" } } }
+        ]
       }
     },
 
@@ -108,21 +165,22 @@
           "description": "ISO 639-1 code, e.g. 'de'.",
           "type": "string",
           "pattern": "^[a-z]{2,3}$"
-        },
-        "files": {
-          "description": "One or more pages. 'num' gives the order and must be unique (checked in CI, not expressible here).",
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "allOf": [
-              { "$ref": "#/$defs/file" },
-              {
-                "properties": { "role": { "const": "page" } },
-                "required": ["num"]
-              }
-            ]
-          }
         }
+      }
+    },
+
+    "document_files": {
+      "description": "One or more pages. 'num' gives the order and must be unique (checked in CI, not expressible here).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/file" },
+          {
+            "properties": { "role": { "const": "page" } },
+            "required": ["num"]
+          }
+        ]
       }
     },
 

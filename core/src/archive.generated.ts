@@ -8,3 +8,5 @@ export const OBJECT_TYPES = {
 export type ObjectType = keyof typeof OBJECT_TYPES
 
 export const ENTITY_TYPES = ['person', 'place', 'building', 'business', 'event', 'thing'] as const
+
+export const EXTERNAL_TYPES = ['archive', 'platform', 'website'] as const

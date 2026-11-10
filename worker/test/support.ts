@@ -42,7 +42,7 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     refs: { main: 'c0' } as Record<string, string>,
     commits: { c0: { tree: 't0', parents: [] as string[], message: 'start' } } as Record<string, { tree: string; parents: string[]; message: string }>,
     trees: {} as Record<string, { base: string; entries: { path: string; content?: string; sha?: string | null }[]; paths: Set<string>; files: Map<string, string> }>,
-    pulls: [] as { number: number; head: string; state: 'open' | 'closed'; merged: boolean; draft: boolean; title: string; body: string }[],
+    pulls: [] as { number: number; head: string; state: 'open' | 'closed'; merged: boolean; draft: boolean; title: string; body: string; createdAt?: string }[],
     calls: [] as Call[],
     revoked: 0,
     patchFailures: options.patchFailures ?? 0,
@@ -127,6 +127,37 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
       state.refs[m[1]] = body.sha
       return reply({})
     }
+    if (path === '/pulls' && method === 'GET' && !url.searchParams.has('head')) {
+      // The list of all pull requests, newest first (state=all).
+      return reply(
+        [...state.pulls]
+          .sort((a, b) => b.number - a.number)
+          .map((p) => ({
+            number: p.number,
+            html_url: `https://github.com/verein/archiv-data/pull/${p.number}`,
+            state: p.state,
+            merged_at: p.merged ? '2026-11-09T12:00:00Z' : null,
+            draft: p.draft,
+            title: p.title,
+            body: p.body,
+            created_at: p.createdAt ?? '2026-11-09T10:00:00Z',
+            head: { ref: p.head, sha: state.refs[p.head] },
+          })),
+      )
+    }
+    if ((m = /^\/pulls\/(\d+)\/files$/.exec(path)) && method === 'GET') {
+      // What the branch has that main does not: added, changed or removed files.
+      const pull = state.pulls.find((p) => p.number === Number(m![1]))
+      if (!pull) return reply({ message: 'Not Found' }, 404)
+      const from = state.trees[state.commits[state.refs.main].tree]?.files ?? new Map<string, string>()
+      const to = state.trees[state.commits[state.refs[pull.head]].tree]?.files ?? new Map<string, string>()
+      const files = [
+        ...[...to].filter(([name, content]) => from.get(name) !== content).map(([name]) => ({ filename: name, status: from.has(name) ? 'modified' : 'added' })),
+        ...[...from.keys()].filter((name) => !to.has(name)).map((name) => ({ filename: name, status: 'removed' })),
+      ]
+      const page = Number(url.searchParams.get('page') ?? 1)
+      return reply(files.slice((page - 1) * 100, page * 100))
+    }
     if (path === '/pulls' && method === 'GET') {
       const head = url.searchParams.get('head')?.split(':')[1]
       return reply(state.pulls.filter((p) => p.state === 'open' && p.head === head).map((p) => ({ number: p.number, node_id: `PR_${p.number}`, draft: p.draft, html_url: `https://github.com/verein/archiv-data/pull/${p.number}` })))
@@ -146,7 +177,7 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     }
     if ((m = /^\/pulls\/(\d+)$/.exec(path))) {
       const pull = state.pulls.find((p) => p.number === Number(m![1]))
-      return pull ? reply({ number: pull.number, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}`, state: pull.state, merged: pull.merged, draft: pull.draft }) : reply({ message: 'Not Found' }, 404)
+      return pull ? reply({ number: pull.number, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}`, state: pull.state, merged: pull.merged, draft: pull.draft, head: { ref: pull.head, sha: state.refs[pull.head] } }) : reply({ message: 'Not Found' }, 404)
     }
     return reply({ message: `unexpected ${method} ${input}` }, 500)
   })

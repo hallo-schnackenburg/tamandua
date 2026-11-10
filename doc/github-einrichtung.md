@@ -84,6 +84,11 @@ ist ein Branch und ein Pull Request.
   ist. Sie existiert nur im Browser; GitHub sieht sie erst mit dem ersten gesicherten Objekt. Wird sie nicht
   umbenannt und bleibt leer, löscht die App sie beim Abmelden und beim nächsten Anmelden wieder. Nach dem Einreichen
   wird, falls keine offene mehr da ist, gleich eine neue angelegt.
+- Auf einem neuen Gerät (oder nach `/clear!`) lädt die App nach der Anmeldung die eigenen offenen und eingereichten
+  Erfassungen aus GitHub: die Liste und die Objekte kommen über den Worker bzw. direkt von `raw.githubusercontent.com`
+  (am Commit, daher nie veraltet), die Vorschaubilder aus dem Bucket. Was im Browser schon da ist, bleibt unangetastet.
+  Erst danach legt die App bei Bedarf eine leere Erfassung an. Erfassungen anderer Personen und übernommene werden
+  (noch) nicht geladen.
 - Es können mehrere Erfassungen gleichzeitig offen sein. Ein Objekt gehört zu genau einer Erfassung, eine Datei zu der
   Erfassung, deren Objekt sie verwendet.
 - Die App sichert eine Sekunde nach jeder eigenen Änderung (Objekt angelegt, Agent hat Felder gesetzt, Dateien

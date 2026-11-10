@@ -27,6 +27,8 @@ export const FIELD_NAMES: Record<string, string> = {
   description: 'Beschreibung',
   notes: 'Notizen',
   language: 'Sprache',
+  storage: 'Ablage',
+  external: 'Externe Fundstelle',
 }
 
 /** "Brief" for a letter, "Bild" for an image without subtype. */

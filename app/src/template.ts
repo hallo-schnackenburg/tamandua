@@ -7,3 +7,11 @@ type: ${type}
 ${subtype ? `subtype: ${subtype}\n` : ''}title:
 `
 }
+
+/** Text of a new, empty object (the "+"): only the id; type and title are what the person or the chat fills in next. */
+export function newEmptyText(id: string): string {
+  return `id: ${id}
+type:
+title:
+`
+}

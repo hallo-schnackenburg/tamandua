@@ -172,3 +172,58 @@ describe('toToolCalls', () => {
     expect(toToolCalls({ content: 'x' })[0].tool).toBe('say')
   })
 })
+
+describe('objects that live elsewhere', () => {
+  const answer = (...content: unknown[]) => ({ content })
+  const place = { uri: 'https://www.deutsche-digitale-bibliothek.de/item/ABC', site: 'Deutsche Digitale Bibliothek', type: 'archive' }
+
+  it('takes the places of a created object', () => {
+    const calls = toToolCalls(
+      answer({ type: 'tool_use', name: 'create_object', input: { type: 'image', subtype: 'photo', fields: { title: 'Mühle am Aland' }, external: [place] } }),
+    )
+    expect(calls).toEqual([{ tool: 'create_object', type: 'image', subtype: 'photo', fields: { title: 'Mühle am Aland' }, external: [place] }])
+  })
+
+  it('leaves out an address that is none and values that are made up, but keeps the rest of a place', () => {
+    const calls = toToolCalls(
+      answer({
+        type: 'tool_use',
+        name: 'create_object',
+        input: {
+          type: 'image',
+          external: [
+            { uri: 'Arcinsys Nr. 5' },
+            { uri: 'https://example.org/a', site: '<UNKNOWN>', reference: ' Hann. 180 ', retrieved: 'gestern' },
+            { site: 'Wendlandarchiv', type: 'archive' },
+          ],
+        },
+      }),
+    )
+    expect((calls[0] as any).external).toEqual([
+      { uri: 'https://example.org/a', reference: 'Hann. 180' },
+      { site: 'Wendlandarchiv', type: 'archive' },
+    ])
+  })
+
+  it('has no places when none are usable', () => {
+    const calls = toToolCalls(answer({ type: 'tool_use', name: 'create_object', input: { type: 'image', external: [{ uri: 'nope' }] } }))
+    expect((calls[0] as any).external).toBeUndefined()
+  })
+
+  it('lets the model know about them', () => {
+    const built = buildModelRequest(request({ files: [], message: 'extern: https://example.org/a' }), 'm')
+    expect(built.system).toContain('lives somewhere else')
+    expect(built.system).toContain('archive, platform, website')
+    const create = built.tools.find((tool) => tool.name === 'create_object') as any
+    expect(create.input_schema.properties.external.items.required).toBeUndefined() // not even the address is required
+  })
+
+  it('says plainly when no object is part of the context, and warns against creating one for "das Objekt"', () => {
+    const none = buildModelRequest(request({ files: [], objects: [], message: 'Das Objekt ist extern' }), 'm')
+    expect(String(none.messages[none.messages.length - 1].content)).toContain('Objects this message is about:\n(none)')
+    expect(none.system).toContain('NO object is part of the context')
+    expect(none.system).toContain('never a reason to create one')
+    const some = buildModelRequest(request({ files: [], objects: [{ number: 2, text: 'id: x', issues: [] }] }), 'm')
+    expect(String(some.messages[some.messages.length - 1].content)).toContain('Objekt 2')
+  })
+})

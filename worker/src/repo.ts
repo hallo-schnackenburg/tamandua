@@ -6,13 +6,19 @@
 //   POST /repo/submit      {session}  asks for a review: marks the draft ready (or opens the pull request)
 //   POST /repo/rename      {session}  gives the open pull request the session's new name
 //   GET  /repo/pull/<n>    state of a pull request: open, closed, merged
+//   GET  /repo/erfassungen the sessions of everybody: the pull requests whose branch is erfassung/<login>/<slug>
+//   GET  /repo/erfassung/<n>  one session's objects (path and what happened to it) and where to read their text:
+//                          the browser reads it itself, from raw.githubusercontent.com at the head commit; `files` is the
+//                          address of the bucket for the previews
 //
 // The app checks every object against the schema before it sends it. The Worker cannot (the schema
 // checker generates code, which Workers do not allow); it only checks that the objects are what they
 // claim to be. The check in the data repository's pull request is the one that counts.
 
 import { objectPath, parseObjectId } from '@tamandua/core/paths'
-import { GitHubError, Repo, type GithubEnv } from './github.js'
+import { GitHubError, Repo, type GithubEnv, type ListedPull } from './github.js'
+import { objectUrl } from './s3.js'
+import { s3Config, type UploadEnv } from './upload.js'
 import type { Auth } from './session.js'
 
 const MAX_OBJECTS = 50
@@ -137,7 +143,84 @@ export function bodyOf(login: string, session: SessionRef): string {
   return `Erfasst über Tamandua von ${login}.\n\n<!-- tamandua-session: ${marker} -->`
 }
 
-export interface RepoEnv extends GithubEnv {}
+/** A session as the list shows it. */
+export interface Erfassung {
+  number: number
+  url: string
+  /** `open` is a draft, `submitted` is ready for review, `merged`; a pull request closed without merge counts as open again. */
+  state: 'open' | 'submitted' | 'merged'
+  /** Closed without being merged: the branch is still there, but its pull request is not open any more. */
+  closed: boolean
+  /** The branch erfassung/<login>/<slug>. */
+  branch: string
+  login: string
+  slug: string
+  name: string
+  createdAt: string
+  /** The commit the pull request is at now. */
+  head: string
+}
+
+const MARKER = /<!-- tamandua-session: (\{.*?\}) -->/s
+
+/** The session's name and slug from the pull request's text (see `bodyOf`), or undefined if it has no marker. */
+export function markerOf(body: string | null): SessionRef | undefined {
+  const match = body ? MARKER.exec(body) : null
+  if (!match) return undefined
+  try {
+    const data = JSON.parse(match[1]) as { slug?: unknown; name?: unknown }
+    return typeof data.slug === 'string' && typeof data.name === 'string' ? { slug: data.slug, name: data.name } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const SESSION_BRANCH = /^erfassung\/([A-Za-z0-9-]+)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/
+
+/** The sessions among the pull requests: those whose branch is erfassung/<login>/<slug>. */
+export function erfassungenOf(pulls: ListedPull[]): Erfassung[] {
+  const found: Erfassung[] = []
+  for (const pull of pulls) {
+    const match = SESSION_BRANCH.exec(pull.head.ref)
+    if (!match) continue
+    const [, login, slug] = match
+    const state = pull.merged_at ? 'merged' : pull.state === 'open' && !pull.draft ? 'submitted' : 'open'
+    found.push({
+      number: pull.number,
+      url: pull.html_url,
+      state,
+      closed: pull.state === 'closed' && !pull.merged_at,
+      branch: pull.head.ref,
+      login,
+      slug,
+      name: markerOf(pull.body)?.name ?? pull.title.replace(/\s*\([^()]*\)\s*$/, ''),
+      createdAt: pull.created_at,
+      head: pull.head.sha,
+    })
+  }
+  return found
+}
+
+/** An object of a session: where its YAML is in the repository, and what the pull request does with it. */
+export interface ErfassungObject {
+  id: string
+  path: string
+  status: 'added' | 'modified' | 'removed'
+}
+
+const OBJECT_FILE = /^objects\/[0-9A-Z]{2}\/([0-9A-HJKMNP-TV-Z]{26})\.yaml$/
+
+export function objectsOf(files: { filename: string; status: string }[]): ErfassungObject[] {
+  const objects: ErfassungObject[] = []
+  for (const file of files) {
+    const match = OBJECT_FILE.exec(file.filename)
+    if (!match) continue
+    objects.push({ id: match[1], path: file.filename, status: file.status === 'removed' ? 'removed' : file.status === 'added' ? 'added' : 'modified' })
+  }
+  return objects
+}
+
+export interface RepoEnv extends GithubEnv, UploadEnv {}
 
 export async function handleRepo(request: Request, route: string, user: Auth, env: RepoEnv, fetchFn: typeof fetch): Promise<Response | null> {
   if (!route.startsWith('/repo/')) return null
@@ -194,6 +277,21 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
 
     const match = /^\/repo\/pull\/(\d{1,9})$/.exec(route)
     if (match && request.method === 'GET') return json(await repo.pull(Number(match[1])))
+
+    if (route === '/repo/erfassungen' && request.method === 'GET') return json({ erfassungen: erfassungenOf(await repo.pulls()) })
+
+    const one = /^\/repo\/erfassung\/(\d{1,9})$/.exec(route)
+    if (one && request.method === 'GET') {
+      const { head, files } = await repo.pullFiles(Number(one[1]))
+      // `files` is where the bucket's files can be read from (it is public): the browser fetches the previews itself.
+      const storage = s3Config(env)
+      return json({
+        head,
+        raw: `https://raw.githubusercontent.com/${env.DATA_REPO}/${head}`,
+        files: storage ? objectUrl(storage, '').origin : undefined,
+        objects: objectsOf(files),
+      })
+    }
   } catch (error) {
     if (error instanceof GitHubError) {
       console.error('GitHub error', error.status, error.message)

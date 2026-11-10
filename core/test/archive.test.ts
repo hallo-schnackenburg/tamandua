@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import schema from '../schema/object.schema.json'
 import { render } from '../scripts/generate.mjs'
-import { ENTITY_TYPES, OBJECT_TYPES } from '../src/archive.generated.js'
+import { ENTITY_TYPES, EXTERNAL_TYPES, OBJECT_TYPES } from '../src/archive.generated.js'
 
 const archiveYaml = readFileSync(new URL('../../archive.yaml', import.meta.url), 'utf8')
 
@@ -18,9 +18,12 @@ describe('archive.yaml', () => {
 
   it('has at least one entity type', () => expect(ENTITY_TYPES.length).toBeGreaterThan(0))
 
+  it('has the kinds of external places', () => expect(EXTERNAL_TYPES).toEqual(['archive', 'platform', 'website']))
+
   it.each([
     ['no types', 'entity_types: [person]\n', /object_types/],
     ['a bad subtype', 'object_types:\n  image: [Foto!]\nentity_types: [person]\n', /image/],
     ['no entity types', 'object_types:\n  image: [photo]\n', /entity_types/],
+    ['no external types', 'object_types:\n  image: [photo]\nentity_types: [person]\n', /external_types/],
   ])('refuses %s', (_name, text, message) => expect(() => render(text)).toThrow(message))
 })

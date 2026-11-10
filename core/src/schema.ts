@@ -23,6 +23,9 @@ function toIssue(error: ErrorObject): Issue {
       return { path: child(path, String(params.unevaluatedProperty)), message: `unknown field "${params.unevaluatedProperty}"` }
     case 'additionalProperties':
       return { path: child(path, String(params.additionalProperty)), message: `unknown field "${params.additionalProperty}"` }
+    case 'false schema':
+      if (path.endsWith('/external')) return { path, message: 'only allowed when storage is "external"' }
+      return { path, message: 'not allowed here' }
     case 'required':
       return { path, message: `missing field "${params.missingProperty}"` }
     case 'enum':
@@ -35,6 +38,7 @@ function toIssue(error: ErrorObject): Issue {
       }
       return { path, message: `must be ${params.type}` }
     case 'pattern':
+      if (path.endsWith('/uri')) return { path, message: 'must be a web address starting with http:// or https://' }
       if (path.endsWith('/date')) {
         return { path, message: 'not a valid date; use e.g. "1963", "1963-07-14", "196X", "1960/1969"' }
       }

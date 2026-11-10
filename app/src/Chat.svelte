@@ -63,10 +63,10 @@
   // What the next message is about: the selected files.
   const subject = $derived(ws.target.length === 0 ? '' : ws.target.length === 1 ? `Datei: ${ws.target[0].name}` : `${ws.target.length} Dateien`)
 
-  // The objects of those files, if they have any: a message to a file that has none creates an object, so there is nothing to show then.
+  // The objects the message is about: those of the selected files, if they have any (a message to a file that has none
+  // creates an object, so there is nothing to show then), or the open object that has no files.
   const objectSubject = $derived.by(() => {
-    const ids = new Set(ws.target.map((f) => f.objectId).filter((id): id is string => !!id))
-    const objects = ws.objects.filter((o) => ids.has(o.id))
+    const objects = ws.chatObjects
     if (objects.length === 0) return ''
     if (objects.length > 1) return `${objects.length} Objekte`
     const title = readField(objects[0].text, 'title')
@@ -104,9 +104,9 @@
   </div>
 
   <div class="composer">
-    {#if subject}
+    {#if subject || objectSubject}
       <div class="subjects">
-        <span class="subject">{subject}</span>
+        {#if subject}<span class="subject">{subject}</span>{/if}
         {#if objectSubject}<span class="subject object">{objectSubject}</span>{/if}
       </div>
     {/if}

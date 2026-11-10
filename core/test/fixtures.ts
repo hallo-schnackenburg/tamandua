@@ -63,4 +63,26 @@ export function letter(): Obj {
   }
 }
 
+/** A photo whose content is in an archive: no files, but a place where it can be found. */
+export function external(): Obj {
+  return {
+    id: '01JC8Z5B3R1J8X4F6T0Z7H2K3E',
+    type: 'image',
+    subtype: 'photo',
+    title: 'Fähre bei Schnackenburg',
+    date: '1958',
+    holder: { name: 'Niedersächsisches Landesarchiv', type: 'business' },
+    storage: 'external',
+    external: [
+      {
+        type: 'archive',
+        site: 'Arcinsys',
+        uri: 'https://arcinsys.niedersachsen.de/arcinsys/detailAction?detailid=v1234',
+        reference: 'Hann. 180 Lüneburg Nr. 1234',
+        retrieved: '2026-11-09',
+      },
+    ],
+  }
+}
+
 export const clone = <T>(x: T): T => structuredClone(x)

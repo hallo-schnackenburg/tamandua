@@ -17,3 +17,10 @@ entity_types:
   - business
   - event
   - thing
+
+# What kind of place an entry of "external" points to: where the content of an object lives
+# when it is not in our own store.
+external_types:
+  - archive    # archive, library, museum: catalogue entries, often with a call number
+  - platform   # video, photo or audio platform
+  - website    # any other web page

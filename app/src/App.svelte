@@ -116,7 +116,7 @@
         {/if}
       </span>
       {#if ws.saveState === 'failed'}
-        <span class="sync failed">Nicht gespeichert: Änderungen gehen verloren, wenn du die Seite schließt.</span>
+        <span class="sync failed" title="Im Browser konnte nichts gespeichert werden. Änderungen gehen verloren, wenn du die Seite schließt.">Konnte nicht gesichert werden.</span>
       {/if}
       <span class="spacer"></span>
       <span class="user">
@@ -149,6 +149,9 @@
       <section class="pane">
         <h2>
           Objekte
+          {#if ws.current?.state === 'open'}
+            <button class="add" title="Leeres Objekt hinzufügen" aria-label="Leeres Objekt hinzufügen" onclick={() => ws.addObject()}>+</button>
+          {/if}
         </h2>
         {#if ws.current && ws.current.state !== 'open'}
           {@const session = ws.current}
@@ -208,6 +211,7 @@
   .spinner { width: 10px; height: 10px; border: 1.5px solid #b9c8ee; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .add { margin-left: auto; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 50%; color: #36c; font-size: 1.3rem; font-weight: 400; line-height: 1; cursor: pointer; }
+  button.add { padding: 0; border: 0; background: none; }
   .add:hover { background: #eef2fb; }
   .add input { display: none; }
   .user { display: inline-flex; align-items: center; gap: 6px; }

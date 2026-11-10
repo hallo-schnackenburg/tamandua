@@ -28,6 +28,10 @@ export function render(yamlText) {
     throw new Error('archive.yaml: entity_types must be a list of lower-case names.')
   }
 
+  if (!Array.isArray(data.external_types) || data.external_types.length === 0 || !isNames(data.external_types)) {
+    throw new Error('archive.yaml: external_types must be a list of lower-case names.')
+  }
+
   const lines = Object.entries(types).map(([type, subtypes]) => `  ${type}: ${list(subtypes ?? [])},`)
   return `// Generated from archive.yaml by \`npm run generate\` in core. Do not edit.
 
@@ -38,6 +42,8 @@ ${lines.join('\n')}
 export type ObjectType = keyof typeof OBJECT_TYPES
 
 export const ENTITY_TYPES = ${list(data.entity_types)} as const
+
+export const EXTERNAL_TYPES = ${list(data.external_types)} as const
 `
 }
 
