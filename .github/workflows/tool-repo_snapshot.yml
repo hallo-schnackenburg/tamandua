@@ -1,0 +1,54 @@
+# Builds the snapshot of a data repository: all its objects in one file, kept on the branch `snapshot`.
+# A browser that has no copy of the archive yet reads that one file instead of one request per object.
+# It is not run here but called by the data repositories (see templates/archive/.github/workflows/snapshot.yml).
+name: snapshot (called by the data repositories)
+
+on:
+  workflow_call:
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Data
+        uses: actions/checkout@v4
+        with:
+          path: data
+
+      - name: Tool
+        uses: actions/checkout@v4
+        with:
+          repository: hallo-schnackenburg/tamandua
+          path: tool
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci --workspace core
+        working-directory: tool
+
+      - name: Build
+        run: npx --yes tsx core/scripts/build-snapshot.ts ../data ../out/snapshot.ndjson.gz
+        working-directory: tool
+
+      # The branch has one commit that is replaced every time (force push), so the history does not grow with every push.
+      - name: Publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          commit=$(git -C data rev-parse HEAD)
+          mkdir publish
+          cp out/snapshot.ndjson.gz publish/
+          cd publish
+          git init -q -b snapshot
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add snapshot.ndjson.gz
+          git commit -q -m "Snapshot of $commit"
+          auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push --force "https://github.com/$GITHUB_REPOSITORY" snapshot

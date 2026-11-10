@@ -4,6 +4,7 @@
 
 import { jsonOf, request, SignedOut } from './api.js'
 import type { MirrorBackend } from './archive-mirror.js'
+import { readSnapshot } from './snapshot.js'
 
 export interface User {
   login: string
@@ -209,6 +210,12 @@ export class HttpBackend implements Backend {
       return data
     },
     texts: readTexts,
+    snapshot: async (progress) => {
+      const response = await request(`${this.#url}/repo/snapshot`)
+      if (!response.ok) return undefined
+      const { url } = await jsonOf<{ url?: unknown }>(response)
+      return typeof url === 'string' ? readSnapshot(await fetch(url), progress) : undefined
+    },
   }
 
   async fetchFile(base: string, path: string): Promise<Blob | undefined> {

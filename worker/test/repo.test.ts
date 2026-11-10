@@ -419,6 +419,20 @@ describe('GET /repo/objects', () => {
   })
 })
 
+describe('GET /repo/snapshot', () => {
+  it('tells where the snapshot of the data repository is', async () => {
+    const gh = fakeGitHub()
+    const response = await handle(new Request('http://worker/api/repo/snapshot', { headers: { cookie } }), env, gh.fn)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ url: 'https://raw.githubusercontent.com/verein/archiv-data/snapshot/snapshot.ndjson.gz' })
+  })
+
+  it('is for signed-in people only', async () => {
+    const gh = fakeGitHub()
+    expect((await handle(new Request('http://worker/api/repo/snapshot'), env, gh.fn)).status).toBe(401)
+  })
+})
+
 describe('GET /repo/changes', () => {
   const changes = (gh: ReturnType<typeof fakeGitHub>, since: string) => handle(new Request(`http://worker/api/repo/changes?since=${since}`, { headers: { cookie } }), env, gh.fn)
   const merge = async (gh: ReturnType<typeof fakeGitHub>, data: unknown) => {

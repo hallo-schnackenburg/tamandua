@@ -64,6 +64,8 @@
     return rows.filter((row) => row.values.length > 0)
   }
 
+  const megabytes = (bytes: number) => (bytes / 1e6).toLocaleString('de', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+
   const selected = $derived(archive.selected)
   const shown = $derived(archive.shown)
 
@@ -89,7 +91,11 @@
     {@const p = archive.progress}
     <div class="progress" role="progressbar" aria-label="Fortschritt" aria-valuemin="0" aria-valuemax={p.total} aria-valuenow={p.done}>
       <div class="bar"><i style:width="{(p.done / p.total) * 100}%"></i></div>
-      <span>{p.phase === 'reading' ? 'Wird geladen' : 'Wird vorbereitet'} · {p.done.toLocaleString('de')} von {p.total.toLocaleString('de')}</span>
+      {#if p.phase === 'downloading'}
+        <span>Wird heruntergeladen · {megabytes(p.done)} von {megabytes(p.total)} MB</span>
+      {:else}
+        <span>{p.phase === 'reading' ? 'Wird geladen' : 'Wird vorbereitet'} · {p.done.toLocaleString('de')} von {p.total.toLocaleString('de')}</span>
+      {/if}
     </div>
   {/if}
 {/snippet}

@@ -30,8 +30,8 @@ const breathe = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 export interface MirrorStore {
   /** What was kept: the commit the copy was equal to, and the records. */
   load(): Promise<{ synced?: string; records: MirrorRecord[] }>
-  /** Writes and removes records and sets the commit, in one step. */
-  apply(synced: string, put: MirrorRecord[], remove: string[]): Promise<void>
+  /** Writes and removes records and sets the commit, in one step. Without a commit the one that was set stays as it is. */
+  apply(synced: string | undefined, put: MirrorRecord[], remove: string[]): Promise<void>
 }
 
 export interface TreeObject {
@@ -46,15 +46,20 @@ export interface Change extends TreeObject {
 
 /** How far a long reading is: the texts are read (`reading`), then made ready for use (`preparing`). */
 export interface Progress {
-  phase: 'reading' | 'preparing'
+  phase: 'downloading' | 'reading' | 'preparing'
   done: number
   total: number
 }
+
+/** The texts are read, and kept in the browser, in portions of this many objects: what is done stays if the reading is interrupted. */
+const PORTION = 500
 
 /** Progress is reported at most this often (a reading of 20,000 objects must not make 20,000 changes on the screen). */
 const REPORT_MS = 100
 
 export interface MirrorBackend {
+  /** All objects in one download (the snapshot), if there is one. `progress` is told the bytes that arrived and the bytes there are (0 if unknown). Optional. */
+  snapshot?(progress?: (bytes: number, total: number) => void): Promise<{ records: { path: string; id: string; sha: string; text: string }[] } | undefined>
   /** All objects of main, with the hash of each. */
   tree(): Promise<{ head: string; raw: string; objects: TreeObject[] }>
   /** What changed on main since a commit; `reload` if that cannot be told. */
@@ -154,43 +159,58 @@ export class Mirror {
 
   /** Everything on main; what is equal here already (same hash) is not read again. */
   async #full(): Promise<void> {
+    // Nothing yet: the snapshot gives the first copy in one download; what happened since is found by the comparison below.
+    if (this.records.size === 0) await this.#seed()
+
     const tree = await this.#backend.tree()
     const need = tree.objects.filter((o) => this.records.get(o.path)?.sha !== o.sha)
-    const texts = new Map((await this.#backend.texts(tree.raw, need, (done) => this.#report('reading', done, need.length))).map((t) => [t.id, t.text]))
-    const records: MirrorRecord[] = []
-    for (const object of tree.objects) {
-      const kept = this.records.get(object.path)
-      if (kept && kept.sha === object.sha) {
-        records.push(kept)
-        continue
+    // The texts are read and written in portions: if this is interrupted, the next time starts where it stopped
+    // (the hashes tell what is there already). The commit is only set at the end, so the copy never claims more than it has.
+    for (let from = 0; from < need.length; from += PORTION) {
+      const portion = need.slice(from, from + PORTION)
+      const texts = new Map((await this.#backend.texts(tree.raw, portion, (done) => this.#report('reading', from + done, need.length))).map((t) => [t.id, t.text]))
+      const read: MirrorRecord[] = []
+      for (const object of portion) {
+        const text = texts.get(object.id)
+        if (text === undefined) throw new Error(`Objekt ${object.id} fehlt in der Antwort.`)
+        read.push({ path: object.path, id: object.id, sha: object.sha, text })
       }
-      const text = texts.get(object.id)
-      if (text === undefined) throw new Error(`Objekt ${object.id} fehlt in der Antwort.`)
-      records.push({ path: object.path, id: object.id, sha: object.sha, text })
+      const made = await this.#complete(read, false)
+      await this.#store.apply(undefined, made, [])
+      for (const record of made) this.records.set(record.path, record)
     }
-    // Only what is new needs its `data` (what is kept has it already).
-    const todo = records.filter((r) => this.#derive && r.v !== this.#derive.version)
-    const made = new Map((await this.#complete(todo)).map((r) => [r.path, r]))
-    for (let i = 0; i < records.length; i++) records[i] = made.get(records[i].path) ?? records[i]
-    // Only the differences are written: what is equal is not touched (comparing 20,000 objects should not rewrite them).
-    const put = records.filter((r) => this.records.get(r.path) !== r)
+
     const inTree = new Set(tree.objects.map((o) => o.path))
     const remove = [...this.records.keys()].filter((path) => !inTree.has(path))
-    await this.#store.apply(tree.head, put, remove)
-    this.records = new Map(records.map((r) => [r.path, r]))
+    await this.#store.apply(tree.head, [], remove)
+    for (const path of remove) this.records.delete(path)
     this.synced = tree.head
     this.#changed()
   }
 
+  /** The records of the snapshot, if there is a usable one. Without one nothing happens (the objects are read one by one then). */
+  async #seed(): Promise<void> {
+    let snapshot: Awaited<ReturnType<NonNullable<MirrorBackend['snapshot']>>>
+    try {
+      snapshot = await this.#backend.snapshot?.((done, total) => this.#report('downloading', done, total))
+    } catch {
+      return
+    }
+    if (!snapshot || snapshot.records.length === 0) return
+    const made = await this.#complete(snapshot.records.map(({ path, id, sha, text }) => ({ path, id, sha, text })))
+    await this.#store.apply(undefined, made, [])
+    for (const record of made) this.records.set(record.path, record)
+  }
+
   /** Gives the records their `data`, in slices so that the page stays usable while thousands are parsed. */
-  async #complete(records: MirrorRecord[]): Promise<MirrorRecord[]> {
+  async #complete(records: MirrorRecord[], show = true): Promise<MirrorRecord[]> {
     const derive = this.#derive
     if (!derive) return records
     const made: MirrorRecord[] = []
     let slice = performance.now()
     for (const record of records) {
       made.push({ ...record, data: derive.run(record.text), v: derive.version })
-      this.#report('preparing', made.length, records.length)
+      if (show) this.#report('preparing', made.length, records.length)
       if (performance.now() - slice > SLICE_MS) {
         await breathe()
         slice = performance.now()

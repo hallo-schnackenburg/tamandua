@@ -8,6 +8,8 @@
 //   GET  /repo/pull/<n>    state of a pull request: open, closed, merged
 //   GET  /repo/erfassungen the sessions of everybody: the pull requests whose branch is erfassung/<login>/<slug>
 //   GET  /repo/objects     the objects of the archive (main): id, path and hash of each, and where to read their text (like below)
+//   GET  /repo/snapshot    where the snapshot of the archive is (one file with all objects, kept on the branch `snapshot` by the
+//                          data repository's CI): {url}. The browser reads it for its first copy, and asks for the rest as usual.
 //   GET  /repo/changes?since=<commit>  what changed on main since that commit: objects added, modified, removed (or
 //                          {reload: true} if that cannot be told: then everything is read again)
 //   GET  /repo/erfassung/<n>  one session's objects (path and what happened to it) and where to read their text:
@@ -19,6 +21,7 @@
 // claim to be. The check in the data repository's pull request is the one that counts.
 
 import { objectPath, parseObjectId } from '@tamandua/core/paths'
+import { SNAPSHOT_BRANCH, SNAPSHOT_FILE } from '@tamandua/core/snapshot'
 import { GitHubError, Repo, type ChangedFile, type GithubEnv, type ListedPull } from './github.js'
 import { objectUrl } from './s3.js'
 import { s3Config, type UploadEnv } from './upload.js'
@@ -324,6 +327,10 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
     if (route === '/repo/objects' && request.method === 'GET') {
       const { head, files } = await repo.tree()
       return json({ head, raw: `https://raw.githubusercontent.com/${env.DATA_REPO}/${head}`, objects: archiveObjectsOf(files) })
+    }
+
+    if (route === '/repo/snapshot' && request.method === 'GET') {
+      return json({ url: `https://raw.githubusercontent.com/${env.DATA_REPO}/${SNAPSHOT_BRANCH}/${SNAPSHOT_FILE}` })
     }
 
     if (route === '/repo/changes' && request.method === 'GET') {

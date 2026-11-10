@@ -134,3 +134,23 @@ ist ein Branch und ein Pull Request.
   einen neuen Entwurf auf demselben Branch an.
 - Nach dem Merge löscht GitHub den Branch. Die Erfassung gilt als übernommen und lässt sich in der App aus der
   Ansicht entfernen; im Archiv bleibt sie.
+
+## 6. Snapshot des Archivs
+
+Ein Browser, der noch keine Kopie des Archivs hat, liest nicht jedes Objekt einzeln (bei 20.000 Objekten dauerte das
+13 Minuten), sondern eine einzige Datei: den **Snapshot**. Er enthält alle Objekte (Pfad, ID, Git-Hash, Text) als
+gzip-komprimiertes NDJSON, bei 20.000 Objekten etwa 7 MB, und liegt auf dem Branch `snapshot` des Daten-Repos.
+Danach gleicht die App ihre Kopie mit `main` ab und lädt nur nach, was seit dem Snapshot anders ist. Gibt es keinen
+Snapshot, liest sie wie bisher einzeln.
+
+- Gebaut wird er bei jedem Push auf `main` von einem Workflow im Daten-Repo. Der ruft den wiederverwendbaren Workflow
+  `.github/workflows/snapshot.yml` des Tool-Repos auf (`core/scripts/build-snapshot.ts`). Der Branch `snapshot` hat
+  immer nur einen Commit, der jedes Mal per Force-Push ersetzt wird; die Historie wächst also nicht.
+- Einrichten (je Daten-Repo, also dev, staging und production):
+  1. Die Vorlage `templates/archive/.github/workflows/snapshot.yml` nach `.github/workflows/snapshot.yml` des
+     Daten-Repos kopieren.
+  2. Der wiederverwendbare Workflow muss auf `main` des Tool-Repos liegen (`.github/workflows/snapshot.yml`), und das
+     Tool-Repo muss öffentlich sein oder Workflows für andere Repos freigeben (Settings, Actions, Access).
+  3. Einmal von Hand starten (Actions, "snapshot", "Run workflow"), danach läuft er bei jedem Push.
+- Der Worker kennt die Adresse (`GET /repo/snapshot`); der Browser lädt sie von `raw.githubusercontent.com`. Die
+  Auslieferung wird dort bis zu fünf Minuten zwischengespeichert; was in der Zeit neu dazukam, holt der Abgleich nach.

@@ -13,6 +13,18 @@ class FakeRepo implements MirrorBackend {
   calls = { tree: 0, changes: 0, texts: [] as string[][] }
   reloadNext = false
   failing = false
+  /** What the snapshot has (none: there is no snapshot); it can be older than the repository. */
+  snapshotOf: { path: string; id: string; sha: string; text: string }[] | undefined
+  snapshotFails = false
+  /** Reading the texts fails from this many reads on (for an interrupted reading). */
+  failTextsAfter = Infinity
+  textsRead = 0
+
+  async snapshot(progress?: (bytes: number, total: number) => void) {
+    if (this.snapshotFails) throw new Error('no snapshot')
+    progress?.(10, 10)
+    return this.snapshotOf && { records: this.snapshotOf }
+  }
 
   get head() {
     return this.commits[this.commits.length - 1]
@@ -58,6 +70,8 @@ class FakeRepo implements MirrorBackend {
 
   async texts(_raw: string, objects: { id: string; path: string }[]) {
     this.calls.texts.push(objects.map((o) => o.id))
+    this.textsRead += objects.length
+    if (this.textsRead > this.failTextsAfter) throw new Error('connection lost')
     return objects.map((o) => ({ id: o.id, text: this.files.get(o.path) ?? '' }))
   }
 }
@@ -68,8 +82,8 @@ class MemoryStore implements MirrorStore {
   async load() {
     return { synced: this.synced, records: [...this.records.values()] }
   }
-  async apply(synced: string, put: MirrorRecord[], remove: string[]) {
-    this.synced = synced
+  async apply(synced: string | undefined, put: MirrorRecord[], remove: string[]) {
+    if (synced) this.synced = synced
     for (const r of put) this.records.set(r.path, r)
     for (const p of remove) this.records.delete(p)
   }
@@ -283,7 +297,7 @@ describe('comparing everything', () => {
     repo.files.set(pathOf(idOf(2)), 'b2')
     repo.files.delete(pathOf(idOf(3)))
     await mirror.sync(true)
-    expect(writes).toEqual([['+02', '-03']])
+    expect(writes.flat().sort()).toEqual(['+02', '-03'])
     expect(store.records.size).toBe(2)
   })
 })
@@ -305,8 +319,82 @@ describe('progress', () => {
     await mirror.sync()
     // Reports that come close together are thinned out, but the last of each phase is always there.
     expect(seen).toContain('reading 3/3')
-    expect(seen).toContain('preparing 3/3')
     expect(seen.at(-1)).toBeUndefined()
-    expect(seen.indexOf('reading 3/3')).toBeLessThan(seen.indexOf('preparing 3/3'))
+    // A later, shorter reading (what changed) reports the preparing too; the first one only shows the reading (it is portions of 500).
+    seen.length = 0
+    repo.commit({ 4: 'd' })
+    await mirror.sync()
+    expect(seen).toContain('reading 1/1')
+    expect(seen).toContain('preparing 1/1')
+    expect(seen.indexOf('reading 1/1')).toBeLessThan(seen.indexOf('preparing 1/1'))
+    expect(seen.at(-1)).toBeUndefined()
+  })
+})
+
+describe('the snapshot', () => {
+  const entryOfText = (n: number, text: string) => ({ path: pathOf(idOf(n)), id: idOf(n), sha: shaOf(text), text })
+
+  it('gives the first copy; only what differs from the repository is read one by one', async () => {
+    const { repo, store, mirror } = setup()
+    repo.commit({ 1: 'a', 2: 'b', 3: 'c' })
+    repo.snapshotOf = [entryOfText(1, 'a'), entryOfText(2, 'b-old'), entryOfText(9, 'gone')] // made a while ago
+    await mirror.sync()
+    expect(texts(mirror)).toEqual({ [idOf(1)]: 'a', [idOf(2)]: 'b', [idOf(3)]: 'c' })
+    expect(repo.calls.texts).toEqual([[idOf(2), idOf(3)]]) // 1 is equal, 2 changed, 3 is new, 9 is removed
+    expect(store.records.size).toBe(3)
+    expect(store.synced).toBe(repo.head)
+  })
+
+  it('is not used when there is a copy already, and not asked for when there is none', async () => {
+    const { repo, mirror } = setup()
+    repo.commit({ 1: 'a' })
+    repo.snapshotOf = [entryOfText(1, 'a')]
+    const snapshot = vi.spyOn(repo, 'snapshot')
+    await mirror.sync()
+    await mirror.sync(true)
+    expect(snapshot).toHaveBeenCalledTimes(1)
+  })
+
+  it('is left out when there is none, when it fails, or when it is empty: everything is read one by one', async () => {
+    for (const prepare of [(r: FakeRepo) => (r.snapshotOf = undefined), (r: FakeRepo) => ((r.snapshotOf = []), undefined), (r: FakeRepo) => (r.snapshotFails = true)]) {
+      const { repo, mirror } = setup()
+      repo.commit({ 1: 'a', 2: 'b' })
+      prepare(repo)
+      await mirror.sync()
+      expect(texts(mirror)).toEqual({ [idOf(1)]: 'a', [idOf(2)]: 'b' })
+      expect(repo.calls.texts).toEqual([[idOf(1), idOf(2)]])
+    }
+  })
+
+  it('reports the download', async () => {
+    const { repo, mirror } = setup()
+    repo.commit({ 1: 'a' })
+    repo.snapshotOf = [entryOfText(1, 'a')]
+    const seen: (string | undefined)[] = []
+    mirror.onProgress = (p) => seen.push(p && `${p.phase} ${p.done}/${p.total}`)
+    await mirror.sync()
+    expect(seen).toContain('downloading 10/10')
+  })
+})
+
+describe('an interrupted first reading', () => {
+  it('keeps what was read and goes on from there', async () => {
+    const { repo, store, mirror } = setup()
+    const many = Object.fromEntries(Array.from({ length: 1200 }, (_, i) => [i + 1, `t${i + 1}`]))
+    repo.commit(many)
+    repo.failTextsAfter = 600 // the first portion (500) arrives, the second fails
+    await expect(mirror.sync()).rejects.toThrow('connection lost')
+    expect(store.records.size).toBe(500) // kept
+    expect(store.synced).toBeUndefined() // but the copy does not claim to be complete
+
+    // A new page load: the kept objects are there, and only the rest is read.
+    repo.failTextsAfter = Infinity
+    repo.calls.texts.length = 0
+    const again = new Mirror(store, repo, () => {})
+    expect(await again.open()).toBe(false) // not complete: nothing to show yet
+    await again.sync()
+    expect(again.records.size).toBe(1200)
+    expect(repo.calls.texts.flat()).toHaveLength(700)
+    expect(store.synced).toBe(repo.head)
   })
 })

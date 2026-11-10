@@ -132,13 +132,13 @@ export async function loadArchive(): Promise<{ synced?: string; records: MirrorR
 }
 
 /** Writes and removes records of the archive's copy and sets its commit, all or nothing. */
-export async function saveArchive(synced: string, put: MirrorRecord[], remove: string[]): Promise<void> {
+export async function saveArchive(synced: string | undefined, put: MirrorRecord[], remove: string[]): Promise<void> {
   const db = await database()
   const transaction = db.transaction([ARCHIVE, META], 'readwrite')
   const store = transaction.objectStore(ARCHIVE)
   for (const path of remove) store.delete(path)
   for (const record of put) store.put({ ...record })
-  transaction.objectStore(META).put({ id: 'archive', synced })
+  if (synced) transaction.objectStore(META).put({ id: 'archive', synced })
   await done(transaction)
 }
 
