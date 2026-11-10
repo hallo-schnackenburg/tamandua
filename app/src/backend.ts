@@ -102,7 +102,7 @@ const MAX_PER_SAVE = 50
 const READ_PARALLEL = 6
 
 /** The texts are read from GitHub directly, at a commit: a public address that never changes its content. */
-async function readTexts(raw: string, wanted: { id: string; path: string }[]): Promise<{ id: string; text: string }[]> {
+async function readTexts(raw: string, wanted: { id: string; path: string }[], progress?: (done: number) => void): Promise<{ id: string; text: string }[]> {
   const objects: { id: string; text: string }[] = []
   let next = 0
   const worker = async () => {
@@ -111,6 +111,7 @@ async function readTexts(raw: string, wanted: { id: string; path: string }[]): P
       const text = await fetch(`${raw}/${object.path}`)
       if (!text.ok) throw new Error(`Objekt ${object.id} konnte nicht gelesen werden (${text.status}).`)
       objects.push({ id: object.id, text: await text.text() })
+      progress?.(objects.length)
     }
   }
   await Promise.all(Array.from({ length: Math.min(READ_PARALLEL, wanted.length) }, worker))

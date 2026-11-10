@@ -3,7 +3,7 @@
 // work on that copy.
 
 import { readObject } from '@tamandua/core'
-import { Mirror, type Derive, type MirrorBackend, type MirrorRecord } from './archive-mirror.js'
+import { Mirror, type Derive, type MirrorBackend, type MirrorRecord, type Progress } from './archive-mirror.js'
 import { loadArchive, saveArchive } from './db.js'
 import { Live } from './live.js'
 import { placeOf } from './labels.js'
@@ -53,6 +53,8 @@ export function entryOf(record: MirrorRecord): Entry {
   }
 }
 
+/** The progress is shown from this many objects to read on (for fewer it is over before anyone could look at it). */
+const SHOW_PROGRESS_FROM = 50
 /** How often the repository is asked whether something changed (while the page is visible), as long as the live connection is not there. */
 const POLL_MS = 60_000
 /** With the live connection open, it is asked anyway at this distance, in case a message got lost. */
@@ -75,6 +77,8 @@ export class ArchiveDb {
    * (just started or just lost), `lost` (it does not come back: the repository is asked every minute), `none` (no Worker, no connection).
    */
   liveState = $state<'none' | 'connecting' | 'live' | 'lost'>('none')
+  /** How far a long reading is (the first one, or a big change); none for a short one. */
+  progress = $state.raw<Progress>()
   entries = $state.raw<Entry[]>([])
   query = $state('')
   selectedId = $state<string>()
@@ -102,6 +106,7 @@ export class ArchiveDb {
       () => this.#publish(),
       DERIVE,
     )
+    this.#mirror.onProgress = (progress) => (this.progress = progress && progress.total >= SHOW_PROGRESS_FROM ? progress : undefined)
   }
 
   /** The entries that match the search words (all of them must be in the title), by title. */

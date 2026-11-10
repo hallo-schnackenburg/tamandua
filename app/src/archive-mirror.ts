@@ -44,13 +44,23 @@ export interface Change extends TreeObject {
   status: 'added' | 'modified' | 'removed'
 }
 
+/** How far a long reading is: the texts are read (`reading`), then made ready for use (`preparing`). */
+export interface Progress {
+  phase: 'reading' | 'preparing'
+  done: number
+  total: number
+}
+
+/** Progress is reported at most this often (a reading of 20,000 objects must not make 20,000 changes on the screen). */
+const REPORT_MS = 100
+
 export interface MirrorBackend {
   /** All objects of main, with the hash of each. */
   tree(): Promise<{ head: string; raw: string; objects: TreeObject[] }>
   /** What changed on main since a commit; `reload` if that cannot be told. */
   changes(since: string): Promise<{ reload: true } | { head: string; raw: string; changes: Change[] }>
-  /** The text of the objects at a commit. */
-  texts(raw: string, objects: { id: string; path: string }[]): Promise<{ id: string; text: string }[]>
+  /** The text of the objects at a commit. `progress` is told how many are read so far. */
+  texts(raw: string, objects: { id: string; path: string }[], progress?: (done: number) => void): Promise<{ id: string; text: string }[]>
 }
 
 export class Mirror {
@@ -62,6 +72,9 @@ export class Mirror {
   #backend: MirrorBackend
   #changed: () => void
   #derive: Derive | undefined
+  /** Told how far a long reading is, and `undefined` when it is over. */
+  onProgress: (progress: Progress | undefined) => void = () => {}
+  #reported = 0
   #running: Promise<void> | undefined
   #again = false
   #fullNext = false
@@ -84,6 +97,7 @@ export class Mirror {
       const made = await this.#complete(old)
       await this.#store.apply(this.synced, made, [])
       for (const record of made) this.records.set(record.path, record)
+      this.onProgress(undefined)
     }
     if (this.synced) this.#changed()
     return this.synced !== undefined
@@ -107,7 +121,10 @@ export class Mirror {
         this.#fullNext = false
         await (all ? this.#full() : this.#once())
       } while (this.#again)
-    })().finally(() => (this.#running = undefined))
+    })().finally(() => {
+      this.#running = undefined
+      this.onProgress(undefined)
+    })
     return this.#running
   }
 
@@ -118,7 +135,7 @@ export class Mirror {
     if (answer.head === this.synced && answer.changes.length === 0) return
 
     const wanted = answer.changes.filter((c) => c.status !== 'removed')
-    const texts = new Map((await this.#backend.texts(answer.raw, wanted)).map((t) => [t.id, t.text]))
+    const texts = new Map((await this.#backend.texts(answer.raw, wanted, (done) => this.#report('reading', done, wanted.length))).map((t) => [t.id, t.text]))
     const read: MirrorRecord[] = []
     for (const change of wanted) {
       const text = texts.get(change.id)
@@ -139,7 +156,7 @@ export class Mirror {
   async #full(): Promise<void> {
     const tree = await this.#backend.tree()
     const need = tree.objects.filter((o) => this.records.get(o.path)?.sha !== o.sha)
-    const texts = new Map((await this.#backend.texts(tree.raw, need)).map((t) => [t.id, t.text]))
+    const texts = new Map((await this.#backend.texts(tree.raw, need, (done) => this.#report('reading', done, need.length))).map((t) => [t.id, t.text]))
     const records: MirrorRecord[] = []
     for (const object of tree.objects) {
       const kept = this.records.get(object.path)
@@ -173,11 +190,19 @@ export class Mirror {
     let slice = performance.now()
     for (const record of records) {
       made.push({ ...record, data: derive.run(record.text), v: derive.version })
+      this.#report('preparing', made.length, records.length)
       if (performance.now() - slice > SLICE_MS) {
         await breathe()
         slice = performance.now()
       }
     }
     return made
+  }
+
+  #report(phase: Progress['phase'], done: number, total: number): void {
+    const now = performance.now()
+    if (done < total && now - this.#reported < REPORT_MS) return
+    this.#reported = now
+    this.onProgress({ phase, done, total })
   }
 }

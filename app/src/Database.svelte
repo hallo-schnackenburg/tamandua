@@ -84,12 +84,22 @@
   })
 </script>
 
+{#snippet progress()}
+  {#if archive.progress}
+    {@const p = archive.progress}
+    <div class="progress" role="progressbar" aria-label="Fortschritt" aria-valuemin="0" aria-valuemax={p.total} aria-valuenow={p.done}>
+      <div class="bar"><i style:width="{(p.done / p.total) * 100}%"></i></div>
+      <span>{p.phase === 'reading' ? 'Wird geladen' : 'Wird vorbereitet'} · {p.done.toLocaleString('de')} von {p.total.toLocaleString('de')}</span>
+    </div>
+  {/if}
+{/snippet}
+
 <div class="database">
   <section class="pane list-pane">
     <h2>
       Objekte
-      <span class="count">{archive.state === 'ready' ? (archive.query ? `${shown.length} von ${archive.entries.length}` : archive.entries.length) : ''}</span>
-      {#if archive.syncing && archive.state === 'ready'}<span class="spinner" role="status" aria-label="Wird aktualisiert" title="Wird aktualisiert"></span>{/if}
+      <span class="count">{archive.state === 'ready' && !archive.progress ? (archive.query ? `${shown.length} von ${archive.entries.length}` : archive.entries.length) : ''}</span>
+      {#if archive.syncing && archive.state === 'ready' && !archive.progress}<span class="spinner" role="status" aria-label="Wird aktualisiert" title="Wird aktualisiert"></span>{/if}
       {#if archive.liveState === 'live'}
         <span class="badge live" title="Änderungen am Online-Archiv erscheinen hier sofort.">Live</span>
       {:else if archive.liveState === 'connecting'}
@@ -99,6 +109,7 @@
         <button class="refresh" disabled={archive.syncing} onclick={() => archive.refresh(true)}>Aktualisieren</button>
       {/if}
     </h2>
+    {@render progress()}
     <input class="search" type="search" placeholder="Titel suchen" bind:value={archive.query} aria-label="Titel suchen" />
     {#if archive.stale && archive.state === 'ready'}
       <p class="problem small">Keine Verbindung zum Online-Archiv. Du siehst den zuletzt geladenen Stand.</p>
@@ -106,7 +117,7 @@
     {#if archive.state === 'failed'}
       <p class="problem">Die Datenbank konnte nicht gelesen werden: {archive.error}</p>
     {:else if archive.state !== 'ready'}
-      <p class="loading" role="status"><span class="spinner" aria-hidden="true"></span>Wird geladen …</p>
+      {#if !archive.progress}<p class="loading" role="status"><span class="spinner" aria-hidden="true"></span>Wird geladen …</p>{/if}
     {:else if archive.entries.length === 0}
       <p class="quiet">Im Archiv ist noch kein Objekt.</p>
     {:else if shown.length === 0}
@@ -150,6 +161,9 @@
   .count { font-size: 0.75rem; font-weight: 400; color: #888; }
   .search { font: inherit; font-size: 0.9rem; height: 2rem; box-sizing: border-box; padding: 0 12px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 999px; }
   .search:focus { outline: none; border-color: #36c; }
+  .progress { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; font-size: 0.75rem; color: #777; }
+  .bar { height: 6px; border-radius: 999px; background: #e6ebf7; overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 999px; background: #36c; transition: width 0.15s linear; }
   .scroller { flex: 1; min-height: 0; overflow: auto; }
   .list { box-sizing: border-box; margin: 0; padding: 0; list-style: none; }
   .list li { height: 52px; margin-bottom: 4px; }

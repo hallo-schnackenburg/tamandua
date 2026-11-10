@@ -287,3 +287,26 @@ describe('comparing everything', () => {
     expect(store.records.size).toBe(2)
   })
 })
+
+describe('progress', () => {
+  it('tells how far reading and preparing are, and that it is over', async () => {
+    const repo = new FakeRepo()
+    const store = new MemoryStore()
+    const texts = repo.texts.bind(repo)
+    repo.texts = async (raw, objects, progress) => {
+      const answer = await texts(raw, objects)
+      answer.forEach((_, i) => progress?.(i + 1))
+      return answer
+    }
+    const mirror = new Mirror(store, repo, () => {}, { version: 1, run: () => ({}) })
+    const seen: (string | undefined)[] = []
+    mirror.onProgress = (p) => seen.push(p && `${p.phase} ${p.done}/${p.total}`)
+    repo.commit({ 1: 'a', 2: 'b', 3: 'c' })
+    await mirror.sync()
+    // Reports that come close together are thinned out, but the last of each phase is always there.
+    expect(seen).toContain('reading 3/3')
+    expect(seen).toContain('preparing 3/3')
+    expect(seen.at(-1)).toBeUndefined()
+    expect(seen.indexOf('reading 3/3')).toBeLessThan(seen.indexOf('preparing 3/3'))
+  })
+})
