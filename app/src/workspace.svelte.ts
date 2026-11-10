@@ -1176,10 +1176,15 @@ export class Workspace {
   }
 
   #create(call: Extract<ToolCall, { tool: 'create_object' }>, target: FileRecord[], out: Out): ObjectRecord[] {
-    if (call.external && call.external.length > 0) return this.#createExternal(call, out)
     const free = target.filter((f) => !f.objectId)
+    // Without files (none selected) or with external places: an object of its own, no files.
+    if ((call.external && call.external.length > 0) || target.length === 0) return this.#createFileless(call, out)
+    if (!call.type) {
+      out.notes.push('Ich weiß nicht, ob das ein Bild oder ein Dokument ist.')
+      return []
+    }
     if (free.length === 0) {
-      out.notes.push(target.length === 0 ? 'Wähle zuerst eine oder mehrere Dateien aus.' : 'Die Dateien gehören schon zu einem Objekt.')
+      out.notes.push('Die Dateien gehören schon zu einem Objekt.')
       return []
     }
     const session = this.#openSession()
@@ -1231,7 +1236,7 @@ export class Workspace {
   }
 
   /** An object that lives elsewhere: no files, only the places where it can be found. */
-  #createExternal(call: Extract<ToolCall, { tool: 'create_object' }>, out: Out): ObjectRecord[] {
+  #createFileless(call: Extract<ToolCall, { tool: 'create_object' }>, out: Out): ObjectRecord[] {
     const session = this.#openSession()
     if (!session) {
       out.notes.push(this.#frozen())
@@ -1240,13 +1245,13 @@ export class Workspace {
     const places = (call.external ?? [])
       .map((place) => Object.fromEntries(PLACE_KEYS.flatMap((key) => (typeof place?.[key] === 'string' && place[key] ? [[key, place[key]]] : []))))
       .filter((place) => Object.keys(place).length > 0)
-    if (places.length === 0) return []
+    const external = places.length > 0
 
     const id = ulid()
     const number = Math.max(0, ...this.objects.filter((o) => o.sessionId === session.id).map((o) => o.number)) + 1
     let text = newObjectText(id, call.type, call.subtype)
     const applied: string[] = []
-    const fields: Record<string, unknown> = { ...(call.fields ?? {}), storage: 'external', external: places }
+    const fields: Record<string, unknown> = { ...(call.fields ?? {}), ...(external ? { storage: 'external', external: places } : {}) }
     for (const [field, value] of Object.entries(fields)) {
       const result = setField(text, field, value, undefined)
       if (result.ok) {
@@ -1258,7 +1263,7 @@ export class Workspace {
     this.#markObject(id)
     const object = this.objects[this.objects.length - 1]
 
-    const what = `${objectLabel(call.type, call.subtype)}, extern`
+    const what = external ? `${objectLabel(call.type, call.subtype)}, extern` : call.type ? objectLabel(call.type, call.subtype) : 'leer'
     const open = missing(object.text)
     out.log.push(`Objekt ${number} angelegt: ${what}.${open.length ? ` Es fehlt noch: ${open.join(', ')}.` : ''}`)
     const change = this.#change(out, object)

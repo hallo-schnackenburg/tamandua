@@ -111,6 +111,12 @@ files:
     expect(setField(text, 'title', 'X', null).ok).toBe(true)
   })
 
+  it('fills an empty field whatever the old value claims', () => {
+    expect(setField(text, 'title', 'X', 'something the model made up').ok).toBe(true)
+    const edited = ok(setField(text, 'title', 'Von Hand', undefined))
+    expect(setField(edited, 'title', 'X', 'something the model made up')).toEqual({ ok: false, current: 'Von Hand' })
+  })
+
   it('removes a field when the new value is empty', () => {
     const edited = ok(setField(text, 'title', 'Alt', undefined))
     expect(parse(ok(setField(edited, 'title', '', 'Alt'))).title).toBeUndefined()

@@ -226,4 +226,25 @@ describe('objects that live elsewhere', () => {
     const some = buildModelRequest(request({ files: [], objects: [{ number: 2, text: 'id: x', issues: [] }] }), 'm')
     expect(String(some.messages[some.messages.length - 1].content)).toContain('Objekt 2')
   })
+
+  it('lets an object come without a type (no files), and keeps the prompt soft', () => {
+    const external = [{ site: 'YouTube', type: 'platform' }]
+    const kept = toToolCalls(answer({ type: 'tool_use', name: 'create_object', input: { fields: { title: 'Schützenfest 1963' }, external } }))
+    expect(kept[0]).toMatchObject({ tool: 'create_object', fields: { title: 'Schützenfest 1963' }, external })
+    expect((kept[0] as any).type).toBeUndefined()
+    const empty = toToolCalls(answer({ type: 'tool_use', name: 'create_object', input: { fields: { title: 'x' } } }))
+    expect(empty[0]).toMatchObject({ tool: 'create_object', fields: { title: 'x' } })
+    const { system } = buildModelRequest(request(), 'm')
+    expect(system).toContain('Never point the user to a "+" button')
+    expect(system).toContain('never demand')
+    expect(system).not.toContain('adds an empty object')
+    const create = buildModelRequest(request(), 'm').tools.find((tool) => tool.name === 'create_object') as any
+    expect(create.input_schema.required).toBeUndefined()
+  })
+
+  it('tells the model to act at once and to leave old out for empty fields', () => {
+    const { system } = buildModelRequest(request(), 'm')
+    expect(system).toContain('Do what you can at once')
+    expect(system).toContain('leave "old" out')
+  })
 })

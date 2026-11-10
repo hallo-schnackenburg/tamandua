@@ -82,7 +82,9 @@ const isEmpty = (value: unknown): boolean =>
  * Sets one top-level field, but only if it still has the value the caller saw (`old`).
  * That is how the agent changes fields without overwriting what the user has typed in
  * the meantime: it says "title was empty, make it X"; if the user has written a title
- * by then, the change is skipped and the caller reports it. An empty value removes the
+ * by then, the change is skipped and the caller reports it. A field that is empty now is always
+ * filled, whatever `old` says: there is nothing of the user's to protect, and a wrong `old` (the
+ * model's idea of an empty value) must not stop it. An empty value removes the
  * field. A new field is placed before `files`; a date is always written in quotes.
  */
 export function setField(text: string, field: string, value: unknown, old: unknown): SetFieldResult {
@@ -98,7 +100,7 @@ export function setField(text: string, field: string, value: unknown, old: unkno
   }
 
   const current = (doc.toJS() as Record<string, unknown>)[field]
-  const unchanged = (isEmpty(current) && isEmpty(old)) || JSON.stringify(current) === JSON.stringify(old)
+  const unchanged = isEmpty(current) || JSON.stringify(current) === JSON.stringify(old)
   if (!unchanged) return { ok: false, current }
 
   if (isEmpty(value)) {

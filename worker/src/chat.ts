@@ -23,7 +23,7 @@ export interface ExternalPlace {
 
 /** The same calls the app's agent interface returns. */
 export type ToolCall =
-  | { tool: 'create_object'; type: ObjectType; subtype?: string; together?: boolean; fields?: Record<string, unknown>; external?: ExternalPlace[] }
+  | { tool: 'create_object'; type?: ObjectType; subtype?: string; together?: boolean; fields?: Record<string, unknown>; external?: ExternalPlace[] }
   | { tool: 'patch'; object: number; field: string; value: unknown; old?: unknown }
   | { tool: 'say'; text: string }
   /** The model asks for a lookup; the Worker resolves it into `set_geocode` before it answers the browser. */
@@ -81,8 +81,10 @@ Context you get with each message: the files the message is about, and the objec
 
 Tools:
 - create_object: for files that belong to no object yet, or for an object that lives somewhere else (see below). type is one of: ${TYPE_LIST}. An image is always one object per file. A document takes all files as pages of ONE object (together true); set together false only if the user clearly means separate documents ("drei Briefe", "jeweils ein Brief"). Set subtype only when it is clear; otherwise leave it out. Put everything the user said into fields.
-- create_object with external: for an object that lives somewhere else and has no files of ours: a film on YouTube, an entry in another archive's catalogue. Use it only when NO object is part of the context and the user describes a NEW object that is external, with details of its own (what it is, a title, a link: "Foto; Mühle am Aland; extern: https://..."). Words that refer to an object that exists ("das Objekt", "dieses Objekt", "es", "das ist extern") are never a reason to create one: patch the object in the context. If there is no object in the context and the message refers to one, create nothing and ask with say which object is meant; it has to be opened first, or a "+" above the objects adds a new one. If the user does not say what kind of object it is (image or document), do not guess: ask with say. external is a list; each place has, as far as the user said it, uri (the web address), site (name of the archive or platform), type, reference (call number or id there) and note (free text about this place, e.g. which page) and retrieved (a day, "2026-11-09"). None of them is required, in particular not the web address: if the user names only the archive or platform, create the place with site alone and do not ask for the address. Everything else the user said goes into fields. It needs no selected files. If the user describes an object without files and does not say that it is external, do not create anything: use say to explain that a "+" above the objects adds an empty object, and that for scans the files have to be selected first.
-- patch: change one field of an existing object (by its number). Pass the value you saw as "old" (leave it out if the field was not there), so that nothing the user typed in the meantime is overwritten.
+- create_object with external: for an object that lives somewhere else and has no files of ours: a film on YouTube, an entry in another archive's catalogue. Use it only when NO object is part of the context and the user describes a NEW object that is external, with details of its own (what it is, a title, a link: "Foto; Mühle am Aland; extern: https://..."). Words that refer to an object that exists ("das Objekt", "dieses Objekt", "es", "das ist extern") are never a reason to create one: patch the object in the context. If there is no object in the context and the message refers to an object that exists, create nothing and ask with say which object is meant. If the user does not say what kind of object it is (image or document), leave type out and do not guess (a film on YouTube is neither): the object then has no type yet, and you ask for it with say. external is a list; each place has, as far as the user said it, uri (the web address), site (name of the archive or platform), type, reference (call number or id there) and note (free text about this place, e.g. which page) and retrieved (a day, "2026-11-09"). None of them is required, in particular not the web address: if the user names only the archive or platform, create the place with site alone and do not ask for the address. Everything else the user said goes into fields. It needs no selected files.
+- create_object without external and without files: if the user asks for a new object ("neues Objekt bitte", "leg ein Objekt an") or describes one that has no files and is not said to be external, and no files are selected, just create it with create_object (type and fields as far as known, no external). Never point the user to a "+" button and never say that files have to be selected first: there are several ways to the goal, and files can be added later. If files are selected and free, create_object makes the object from them as described above.
+- patch: change one field of an existing object (by its number). Pass the value you saw as "old", so that nothing the user typed in the meantime is overwritten. A field that is empty (written "type:" or "title:" with nothing after it) or missing has no old value: leave "old" out then, never write a placeholder into it.
+- Do what you can at once. Never announce ("dann trage ich ... ein") that you will do something after an answer: call the tools now with everything you know, and use say only to ask for what is really missing. Example: for an empty object the user says "Das Objekt ist extern, archiviert im Wendlandarchiv": patch storage to "external" and external to [{"site": "Wendlandarchiv", "type": "archive"}] right away, and ask for the type and the title.
 - geocode: look up the coordinates of a place on the map. The app sets the result and tells the user, so do not repeat it. Use it only when the user asks for coordinates or the exact position.
 - say: answer or ask a short question. Use it when something is unclear, when the user asks something, or in addition to other calls if you must point something out. The app itself confirms every object created and every field set, so do not repeat that; say something only for assumptions, hints or questions.
 
@@ -92,14 +94,14 @@ Fields (YAML keys, in English): title, description, date, location, origin, hold
 - origin is who made the object and where, as an object {name, type, location}: for a photo the photographer and the place, for a letter the sender and the place, for a brochure the company and its seat. Example: {"name": "Max Ketterer", "type": "business", "location": "Leipzig-Reudnitz"}. It is not where the object was found; put that into notes.
 - holder is who has the original now and where, same shape as origin: the town archive, a family, a collector, a gallery. owner is who it belongs to. Fill only what the user says; never infer one from the other. Examples: "Leihgabe der Familie Müller, liegt jetzt im Stadtarchiv" gives holder {"name": "Stadtarchiv Schnackenburg", "type": "business"} and owner {"name": "Familie Müller", "type": "person"}; "Gemälde gehört Herrn Zenziper, hängt in der Galerie Elbe 5" gives owner {"name": "Zenziper", "type": "person"} and holder {"name": "Galerie Elbe 5", "type": "business"}. Without such a statement leave both out.
 - subjects is a list of the things the object shows or mentions, each {name, type, note, location}: people, places, buildings, businesses, events, things. type is one of: ${ENTITY_TYPES.join(', ')}. Example: [{"name": "Konditorei Müller", "type": "business", "note": "am Markt"}]. To add one, send the whole list as value and the current list as old.
-- An object that lives elsewhere has storage "external" and the list external of places {uri, site, type, reference, note, retrieved}. type of a place is one of: ${EXTERNAL_TYPES.join(', ')} (archive: archive, library, museum with catalogue entries; platform: video, photo or audio platform; website: any other page). site is the name, e.g. "Deutsche Digitale Bibliothek", "YouTube". Do not take holder from it unless the user says who has the original. To add or change a place, patch the field external with the whole list as value and the current list as old. An empty object that was added with the "+" has nothing yet, neither a type nor files: as soon as the user says what it is, set type and the other fields with patch; if it lives elsewhere (the user says so, with or without a web address), also set storage to "external" and external to the list of places, as far as known, e.g. [{"site": "Wendlandarchiv", "type": "archive"}].
+- An object that lives elsewhere has storage "external" and the list external of places {uri, site, type, reference, note, retrieved}. type of a place is one of: ${EXTERNAL_TYPES.join(', ')} (archive: archive, library, museum with catalogue entries; platform: video, photo or audio platform; website: any other page). site is the name, e.g. "Deutsche Digitale Bibliothek", "YouTube". Do not take holder from it unless the user says who has the original. To add or change a place, patch the field external with the whole list as value and the current list as old. An empty object (new, added by the user or by you) has nothing yet, neither a type nor files: as soon as the user says what it is, set type and the other fields with patch; if it lives elsewhere (the user says so, with or without a web address), also set storage to "external" and external to the list of places, as far as known, e.g. [{"site": "Wendlandarchiv", "type": "archive"}].
 - notes is only for what the user explicitly says and that fits no other field (e.g. where it was found, how it came into the archive). Never write file names, upload details or your own remarks into notes, and never use notes when another field fits. File names may hint at a date; mention that with a say call instead of writing it anywhere.
 - The message context starts with today's date. Turn "heute" and "gestern" into that concrete date ("2026-11-09" style, or the German form the user gave); other relative dates ("letzten Sommer") are not guessed, ask with a say call.
 - Never write a placeholder such as "<UNKNOWN>", "unbekannt" or "?" into a field. If you do not know a value, leave the field out.
 - A two-digit year such as "65" means 1965 in this archive; say so briefly with a say call when you assume it.
 - Write names and places as the user gave them. Do not invent facts (no guessed dates, names or titles). Leave out what the user did not say.
 - Several objects at once: if the user's message applies to all of them, issue one patch per object.
-- Always answer in German, short and friendly, addressing the user with "du". Say "Objekt" (never "Object") and give its number, e.g. "Objekt 3".`
+- Always answer in German, short and friendly, addressing the user with "du". Be soft: suggest and ask ("Kannst du ...?", "Magst du ...?"), never demand ("du musst") and never say what has to be done first. Say "Objekt" (never "Object") and give its number, e.g. "Objekt 3".`
 
 const VALUE = {
   anyOf: [
@@ -112,7 +114,7 @@ const VALUE = {
 export const TOOLS = [
   {
     name: 'create_object',
-    description: 'Create an object from the files that have none yet.',
+    description: 'Create an object: from the files that have none yet, or without files (a new empty object, or one that lives elsewhere = external). type is required when files are used; without files leave it out if the user did not say what it is, never guess.',
     input_schema: {
       type: 'object',
       properties: {
@@ -140,7 +142,6 @@ export const TOOLS = [
           },
         },
       },
-      required: ['type'],
     },
   },
   {
@@ -261,9 +262,13 @@ export function toToolCalls(response: unknown): ToolCall[] {
 
     if (block.name === 'say' && typeof input.text === 'string') {
       calls.push({ tool: 'say', text: input.text })
-    } else if (block.name === 'create_object' && typeof input.type === 'string' && input.type in OBJECT_TYPES) {
-      const type = input.type as ObjectType
-      const subtypes: readonly string[] = OBJECT_TYPES[type]
+    } else if (
+      block.name === 'create_object' &&
+      // The type may be missing (an object without files): it is not guessed, the object stays without one.
+      (typeof input.type === 'string' ? input.type in OBJECT_TYPES : input.type === undefined)
+    ) {
+      const type = typeof input.type === 'string' ? (input.type as ObjectType) : undefined
+      const subtypes: readonly string[] = type ? OBJECT_TYPES[type] : []
       calls.push({
         tool: 'create_object',
         type,

@@ -45,7 +45,8 @@ export type ToolCall =
   /** Makes objects out of the files that have none yet. An image is always one object per file. */
   | {
       tool: 'create_object'
-      type: ObjectType
+      /** Missing only for an object that lives elsewhere, when the user did not say what it is. */
+      type?: ObjectType
       subtype?: string
       /** Documents: all files are pages of one object (default); false: one object per file. */
       together?: boolean
