@@ -171,7 +171,7 @@
       {#if p.phase === 'downloading'}
         <span>Wird heruntergeladen · {megabytes(p.done)} von {megabytes(p.total)} MB</span>
       {:else}
-        <span>{p.phase === 'reading' ? 'Wird geladen' : 'Wird vorbereitet'} · {p.done.toLocaleString('de')} von {p.total.toLocaleString('de')}</span>
+        <span>Objekte laden · {p.done.toLocaleString('de')} von {p.total.toLocaleString('de')}</span>
       {/if}
     </div>
   {/if}
