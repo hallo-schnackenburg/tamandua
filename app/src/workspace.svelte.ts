@@ -5,6 +5,7 @@
 
 import { addFile, readField, readValue, removeFile, setField, ulid, validateObjectYaml, type FileEntry } from '@tamandua/core'
 import type { Agent, ToolCall } from './agent.js'
+import { withoutBlobs } from './blobs.js'
 import * as db from './db.js'
 import { FIELD_NAMES, objectLabel } from './labels.js'
 import { prepareFile } from './prepare.js'
@@ -225,6 +226,8 @@ export class Workspace {
   /** The open object when it has no file to click on (it lives elsewhere). Only counts while no file is active. */
   activeObjectId = $state<string>()
   saveState = $state<'saved' | 'saving' | 'failed'>('saved')
+  /** False once the browser refused to store the pictures (the rest is stored): they are gone after a reload. */
+  picturesKept = $state(true)
   /** SHA-256 of the files being dragged to an object or out of one; empty when nothing is dragged. */
   dragging = $state<string[]>([])
   /** The object whose row is under the dragged tiles, if any. */
@@ -1425,7 +1428,22 @@ export class Workspace {
       this.saveState = 'saved'
     } catch (error) {
       console.error('Saving to the browser storage failed', error)
-      this.saveState = 'failed'
+      // Some browsers refuse the pictures (Safari in a private window): then at least the rest is kept.
+      try {
+        const plainFiles = files.map((f) => withoutBlobs({ ...$state.snapshot(f), progress: undefined }))
+        await db.save(plainFiles, objects.map((o) => $state.snapshot(o)), chat ? $state.snapshot(this.chat.slice(-200)) : undefined,
+          removed,
+          ui ? { selection: $state.snapshot(this.selection), active: this.active, object: this.activeObjectId, session: this.currentId } : undefined,
+          removedFiles,
+          sessions.map((s) => $state.snapshot(s)),
+          removedSessions,
+        )
+        this.picturesKept = false
+        this.saveState = 'saved'
+      } catch (again) {
+        console.error('Saving without the pictures failed too', again)
+        this.saveState = 'failed'
+      }
     }
   }
 

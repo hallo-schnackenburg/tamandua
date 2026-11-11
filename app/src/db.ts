@@ -3,6 +3,7 @@
 // objects (YAML text). The original files themselves are not kept.
 
 import type { MirrorRecord } from './archive-mirror.js'
+import { packBlobs, unpackBlobs } from './blobs.js'
 import type { ChatMessage, FileRecord, ObjectRecord, Session } from './workspace.svelte.js'
 
 const DB_NAME = 'tamandua'
@@ -61,9 +62,11 @@ export async function save(
   sessions: Session[] = [],
   removedSessions: string[] = [],
 ): Promise<void> {
+  // The pictures become bytes first: a transaction must not wait for anything while it is open.
+  const packed = await Promise.all(files.map(packBlobs))
   const db = await database()
   const transaction = db.transaction([FILES, OBJECTS, CHAT, META, SESSIONS], 'readwrite')
-  for (const file of files) transaction.objectStore(FILES).put(file)
+  for (const file of packed) transaction.objectStore(FILES).put(file)
   for (const object of objects) transaction.objectStore(OBJECTS).put(object)
   for (const id of removedObjects) transaction.objectStore(OBJECTS).delete(id)
   for (const sha of removedFiles) transaction.objectStore(FILES).delete(sha)
@@ -142,7 +145,7 @@ export async function saveArchive(synced: string | undefined, put: MirrorRecord[
   await done(transaction)
 }
 
-export const loadFiles = () => readAll<FileRecord>(FILES)
+export const loadFiles = () => readAll<FileRecord>(FILES).then((files) => files.map(unpackBlobs))
 export const loadSessions = () => readAll<Session>(SESSIONS)
 export const loadObjects = () => readAll<ObjectRecord>(OBJECTS)
 

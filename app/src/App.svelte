@@ -155,6 +155,9 @@
           Noch nicht in GitHub gesichert{ws.syncError ? `: ${ws.syncError}` : ''}. Neuer Versuch in einer Minute.
         {/if}
       </span>
+      {#if ws.saveState !== 'failed' && !ws.picturesKept}
+        <span class="sync" title="Der Browser speichert hier keine Bilder (z. B. in einem privaten Fenster). Texte und Objekte sind gesichert; die Vorschaubilder werden nach dem Neuladen neu geholt oder fehlen.">Vorschaubilder werden nicht lokal gespeichert.</span>
+      {/if}
       {#if ws.saveState === 'failed'}
         <span class="sync failed" title="Im Browser konnte nichts gespeichert werden. Änderungen gehen verloren, wenn du die Seite schließt.">Konnte nicht gesichert werden.</span>
       {/if}
