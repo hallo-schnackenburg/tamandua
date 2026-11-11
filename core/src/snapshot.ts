@@ -4,13 +4,13 @@
 //
 // Format: newline-delimited JSON, gzip-compressed. The first line is the header, every other line is one object.
 //   {"snapshot":1,"commit":"<commit of main it was made from>","count":20039}
-//   {"path":"objects/ZH/01M3….yaml","id":"01M3…","sha":"<git blob hash>","text":"id: 01M3…\n…"}
+//   {"path":"objects/Z/H/01M3….yaml","id":"01M3…","sha":"<git blob hash>","text":"id: 01M3…\n…"}
 
 export const SNAPSHOT_BRANCH = 'snapshot'
 export const SNAPSHOT_FILE = 'snapshot.ndjson.gz'
 
 export interface SnapshotRecord {
-  /** Where the object is in the repository: objects/<xx>/<id>.yaml. */
+  /** Where the object is in the repository: objects/<a>/<b>/<id>.yaml. */
   path: string
   id: string
   /** The hash git has for the file: equal hash, equal text. */

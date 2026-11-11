@@ -253,7 +253,12 @@
         {/each}
       </dl>
     {:else}
-      <p class="quiet center">Wähle links ein Objekt.</p>
+      {#if archive.selectedId}
+        <!-- The address names an object: it is looked for as long as the copy is still being read. -->
+        <p class="quiet center">{archive.state === 'ready' && !archive.syncing && !archive.progress ? 'Dieses Objekt gibt es nicht (mehr).' : 'Wird geladen …'}</p>
+      {:else}
+        <p class="quiet center">Wähle links ein Objekt.</p>
+      {/if}
     {/if}
   </section>
 </div>

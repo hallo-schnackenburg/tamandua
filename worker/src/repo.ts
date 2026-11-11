@@ -214,7 +214,7 @@ export interface ErfassungObject {
   status: 'added' | 'modified' | 'removed'
 }
 
-const OBJECT_FILE = /^objects\/[0-9A-Z]{2}\/([0-9A-HJKMNP-TV-Z]{26})\.yaml$/
+const OBJECT_FILE = /^objects\/[0-9A-HJKMNP-TV-Z]\/[0-9A-HJKMNP-TV-Z]\/([0-9A-HJKMNP-TV-Z]{26})\.yaml$/
 
 export function objectsOf(files: { filename: string; status: string }[]): ErfassungObject[] {
   const objects: ErfassungObject[] = []

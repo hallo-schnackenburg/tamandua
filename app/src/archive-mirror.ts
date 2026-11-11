@@ -5,7 +5,7 @@
 
 /** One object file as it is in the repository. */
 export interface MirrorRecord {
-  /** Where it is in the repository: objects/<xx>/<id>.yaml. The key. */
+  /** Where it is in the repository: objects/<a>/<b>/<id>.yaml. The key. */
   path: string
   id: string
   /** The hash GitHub has for the file: equal hash, equal text. */

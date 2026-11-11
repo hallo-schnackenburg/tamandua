@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Mirror, type Change, type MirrorBackend, type MirrorRecord, type MirrorStore } from '../src/archive-mirror.js'
 
 const idOf = (n: number) => `01JABCDEFGHJKMNPQRSTVWXY${String(n).padStart(2, '0')}`
-const pathOf = (id: string) => `objects/${id.slice(10, 12)}/${id}.yaml`
+const pathOf = (id: string) => `objects/${id[24]}/${id[25]}/${id}.yaml`
 const shaOf = (text: string) => `sha:${text}`
 
 /** A repository that moves on: every commit is a set of changes. */

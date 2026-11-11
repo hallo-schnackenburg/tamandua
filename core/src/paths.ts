@@ -74,11 +74,13 @@ export function parseObjectId(id: string): string | null {
 }
 
 /**
- * Where an object's YAML lives in the data repository: objects/<xx>/<id>.yaml. The first characters
- * of a ULID are its creation time and nearly the same for all objects, so the folder is taken from
- * the first two random characters (positions 11 and 12): even spread, a few dozen files per folder.
+ * Where an object's YAML lives in the data repository: objects/<a>/<b>/<id>.yaml, with <a><b> the last two characters of
+ * the id. The first characters of a ULID are its creation time and nearly the same for all objects, the last ones are random
+ * (and also change when a generator counts up within a millisecond): an even spread over 32 x 32 folders. GitHub shows
+ * at most 1000 entries of a folder, so no folder may have many more than 32 (the files in the last folders are
+ * N / 1024: about 20 for 20,000 objects, and 1000 only at a million).
  */
 export function objectPath(id: string): string {
   if (!parseObjectId(id)) throw new Error(`not an object id (ULID): ${id}`)
-  return `objects/${id.slice(10, 12)}/${id}.yaml`
+  return `objects/${id[24]}/${id[25]}/${id}.yaml`
 }

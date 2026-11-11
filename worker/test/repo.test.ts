@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { objectPath } from '@tamandua/core/paths'
 import { handle, type Env } from '../src/index.js'
 import { bodyOf, branchOf, erfassungenOf, markerOf, messageOf, parseSessionRef, titleOf } from '../src/repo.js'
 import { authEnv, blobSha, cookieOf, fakeGitHub } from './support.js'
@@ -28,7 +29,7 @@ describe('POST /repo/save', () => {
     expect(gh.state.commits[commit].parents).toEqual(['c0']) // the branch started at main
     expect(gh.state.commits[commit].message).toBe('Dachbodenfund Postkarten: 2 neu\n\n+ Brief\n+ Brief')
     const tree = gh.state.trees[gh.state.commits[commit].tree]
-    expect(tree.entries.map((e) => e.path)).toEqual([`objects/HJ/${ID_A}.yaml`, `objects/HJ/${ID_B}.yaml`])
+    expect(tree.entries.map((e) => e.path)).toEqual([objectPath(ID_A), objectPath(ID_B)])
     expect(tree.entries[0].content).toBe(text(ID_A))
     // Everything ran with the person's own token.
     expect(gh.state.calls.every((c) => c.auth === 'Bearer ghu_anna')).toBe(true)
@@ -154,8 +155,8 @@ describe('deleting', () => {
     expect(deleted).toBe(1)
     expect(gh.state.commits[commit].message).toBe(`Dachbodenfund Postkarten: - Objekt ${ID_A.slice(-6)}`)
     const tree = gh.state.trees[gh.state.commits[commit].tree]
-    expect(tree.entries).toEqual([{ path: `objects/HJ/${ID_A}.yaml`, mode: '100644', type: 'blob', sha: null }])
-    expect([...tree.paths]).toEqual([`objects/HJ/${ID_B}.yaml`])
+    expect(tree.entries).toEqual([{ path: objectPath(ID_A), mode: '100644', type: 'blob', sha: null }])
+    expect([...tree.paths]).toEqual([objectPath(ID_B)])
   })
 
   it('combines writing and deleting in one commit', async () => {
@@ -163,7 +164,7 @@ describe('deleting', () => {
     await saveOf(gh, objects(ID_A))
     const { commit } = (await (await saveOf(gh, { session, objects: [{ id: ID_B, text: text(ID_B) }], deleted: [ID_A] })).json()) as { commit: string }
     expect(gh.state.commits[commit].message).toBe(`Dachbodenfund Postkarten: 1 neu, 1 gelöscht\n\n+ Brief\n- Objekt ${ID_A.slice(-6)}`)
-    expect([...gh.state.trees[gh.state.commits[commit].tree].paths]).toEqual([`objects/HJ/${ID_B}.yaml`])
+    expect([...gh.state.trees[gh.state.commits[commit].tree].paths]).toEqual([objectPath(ID_B)])
   })
 
   it('does nothing for a file that is not there: no commit, no branch', async () => {
@@ -363,8 +364,8 @@ describe('GET /repo/erfassungen and /repo/erfassung/<n>', () => {
       head: saved.commit,
       raw: `https://raw.githubusercontent.com/verein/archiv-data/${saved.commit}`,
       objects: [
-        { id: ID_A, path: `objects/HJ/${ID_A}.yaml`, status: 'added' },
-        { id: ID_B, path: `objects/HJ/${ID_B}.yaml`, status: 'added' },
+        { id: ID_A, path: objectPath(ID_A), status: 'added' },
+        { id: ID_B, path: objectPath(ID_B), status: 'added' },
       ],
     })
   })
@@ -408,8 +409,8 @@ describe('GET /repo/objects', () => {
     expect(data.head).toBe(saved.commit)
     expect(data.raw).toBe(`https://raw.githubusercontent.com/verein/archiv-data/${saved.commit}`)
     expect(data.objects).toEqual([
-      { id: ID_A, path: `objects/HJ/${ID_A}.yaml`, sha: blobSha(text(ID_A)) },
-      { id: ID_B, path: `objects/HJ/${ID_B}.yaml`, sha: blobSha(text(ID_B)) },
+      { id: ID_A, path: objectPath(ID_A), sha: blobSha(text(ID_A)) },
+      { id: ID_B, path: objectPath(ID_B), sha: blobSha(text(ID_B)) },
     ])
   })
 
@@ -451,8 +452,8 @@ describe('GET /repo/changes', () => {
     expect(data.head).toBe(second)
     expect(data.raw).toBe(`https://raw.githubusercontent.com/verein/archiv-data/${second}`)
     expect(data.changes).toEqual([
-      { id: ID_A, path: `objects/HJ/${ID_A}.yaml`, sha: blobSha(text(ID_A, 'Anderer Titel')), status: 'modified' },
-      { id: ID_B, path: `objects/HJ/${ID_B}.yaml`, sha: blobSha(text(ID_B)), status: 'added' },
+      { id: ID_A, path: objectPath(ID_A), sha: blobSha(text(ID_A, 'Anderer Titel')), status: 'modified' },
+      { id: ID_B, path: objectPath(ID_B), sha: blobSha(text(ID_B)), status: 'added' },
     ])
 
     const third = await merge(gh, { session, deleted: [ID_A] })

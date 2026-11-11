@@ -12,6 +12,7 @@
   import { FakeStore, S3Store } from './uploader.js'
   import { FakeBackend, HttpBackend } from './backend.js'
   import { onSignedOut } from './api.js'
+  import { formatRoute, parseRoute, type Route } from './route.js'
   import { Workspace } from './workspace.svelte.js'
 
   // All state lives in the workspace; this component only arranges the panes.
@@ -53,6 +54,61 @@
     }
   }
 
+  // --- the address of the page: tab, session and chosen object are in it, so that back and forward work and it can be passed on (route.ts) ---
+  const REMEMBERED = 'tamandua.route'
+  const recalled = (): string => {
+    try {
+      return sessionStorage.getItem(REMEMBERED) ?? ''
+    } catch {
+      return ''
+    }
+  }
+  /** A session named in the address that is not here (yet): it is chosen when it appears, e.g. when it is brought back from GitHub. */
+  let pendingSession = $state<string>()
+
+  /** Makes the app show what the route says. */
+  function apply(route: Route) {
+    show(route.tab)
+    if (route.tab === 'database') {
+      archive.selectedId = route.id
+    } else if (route.session && route.session !== ws.currentId) {
+      if (ws.sessions.some((s) => s.id === route.session)) {
+        ws.selectSession(route.session)
+        pendingSession = undefined
+      } else pendingSession = route.session
+    }
+  }
+  // The address, or the one before a sign-in (GitHub sends the browser back to the bare address).
+  const start = parseRoute(location.hash) ?? parseRoute(recalled())
+  if (start) apply(start)
+
+  $effect(() => {
+    const wanted = pendingSession
+    if (wanted && ws.sessions.some((s) => s.id === wanted)) {
+      if (ws.currentId !== wanted) ws.selectSession(wanted)
+      pendingSession = undefined
+    }
+  })
+
+  const current = $derived<Route>(tab === 'database' ? { tab, id: archive.selectedId } : { tab, session: ws.currentId })
+  let last: Route | undefined
+  $effect(() => {
+    const route = current
+    if (!signedIn || pendingSession) return
+    const hash = formatRoute(route)
+    if (hash !== location.hash) {
+      // The first address, and the session becoming known while the page loads, are not steps of the user's: they replace the entry.
+      const replace = last === undefined || (last.tab === 'capture' && route.tab === 'capture' && last.session === undefined)
+      history[replace ? 'replaceState' : 'pushState'](null, '', hash)
+    }
+    last = route
+    try {
+      sessionStorage.setItem(REMEMBERED, hash)
+    } catch {
+      // not remembered, that is all
+    }
+  })
+
   /** Why a sign-in did not work, from the address GitHub sent the browser back to (see the Worker's /auth/callback). */
   function loginNotice(): string | undefined {
     const params = new URLSearchParams(location.search)
@@ -91,6 +147,12 @@
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
+    // Back and forward.
+    const onPop = () => {
+      const route = parseRoute(location.hash)
+      if (route) apply(route)
+    }
+    window.addEventListener('popstate', onPop)
     // Another window in front, the tab still visible: save as well.
     const onBlur = () => {
       void ws.flush()
@@ -102,6 +164,7 @@
       stopSignedOut()
       clearInterval(poll)
       document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('popstate', onPop)
       window.removeEventListener('blur', onBlur)
     }
   })
