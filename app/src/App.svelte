@@ -71,6 +71,7 @@
     show(route.tab)
     if (route.tab === 'database') {
       archive.selectedId = route.id
+      archive.groupId = route.group
     } else if (route.session && route.session !== ws.currentId) {
       if (ws.sessions.some((s) => s.id === route.session)) {
         ws.selectSession(route.session)
@@ -90,7 +91,7 @@
     }
   })
 
-  const current = $derived<Route>(tab === 'database' ? { tab, id: archive.selectedId } : { tab, session: ws.currentId })
+  const current = $derived<Route>(tab === 'database' ? { tab, id: archive.selectedId, group: archive.groupId } : { tab, session: ws.currentId })
   let last: Route | undefined
   $effect(() => {
     const route = current

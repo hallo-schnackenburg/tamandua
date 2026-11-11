@@ -3,6 +3,9 @@
   import Lightbox from './Lightbox.svelte'
   import { bucketPreview } from './viewer.js'
   import { formatDate } from './dates.js'
+  import { ancestors, rowsOf } from './group-tree.js'
+  import { NO_GROUP } from './route.js'
+  import { untrack } from 'svelte'
   import { ENTITY_NAMES, EXTERNAL_NAMES, FIELD_NAMES, objectLabel } from './labels.js'
 
   // The database: the objects that are already in the archive. The list with its search is on the left,
@@ -103,7 +106,7 @@
       { label: FIELD_NAMES.storage, values: [entry.external ? 'extern, nicht in unserem Speicher' : 'hier'] },
       { label: FIELD_NAMES.external, values: list('external', place) },
       { label: 'Dateien', values: count > 0 ? [`${count} ${count === 1 ? 'Datei' : 'Dateien'}`] : [] },
-      { label: FIELD_NAMES.parents, values: entry.parents.map((id): Part[] => [{ text: archive.entries.find((e) => e.id === id)?.title || id, id: archive.entries.some((e) => e.id === id) ? id : undefined }]) },
+      { label: FIELD_NAMES.parents, values: entry.parents.map((id): Part[] => [{ text: archive.byId.get(id)?.title || id, id: archive.byId.has(id) ? id : undefined }]) },
       { label: FIELD_NAMES.members, values: members.map((e): Part[] => [{ text: e.title || 'Ohne Titel', id: e.id }]) },
       { label: FIELD_NAMES.notes, values: list('notes', text) },
       { label: 'Problem', values: archive.problems.get(entry.id) ?? [] },
@@ -146,6 +149,53 @@
   const selected = $derived(archive.selected)
   const shown = $derived(archive.shown)
 
+  // --- the groups: a tree on the left, which can be closed (this is remembered in this browser) ---
+  const GROUPS_OPEN = 'tamandua.groups'
+  let treeOpen = $state(
+    (() => {
+      try {
+        return localStorage.getItem(GROUPS_OPEN) !== 'closed'
+      } catch {
+        return true
+      }
+    })(),
+  )
+  function toggleTree() {
+    treeOpen = !treeOpen
+    try {
+      localStorage.setItem(GROUPS_OPEN, treeOpen ? 'open' : 'closed')
+    } catch {
+      // not remembered, that is all
+    }
+  }
+  /** Ids of the groups that are open in the tree. */
+  let expanded = $state(new Set<string>())
+  function toggle(id: string) {
+    const next = new Set(expanded)
+    if (!next.delete(id)) next.add(id)
+    expanded = next
+  }
+  let groupQuery = $state('')
+  const fold = (text: string): string => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+  const rows = $derived(rowsOf(archive.tree, expanded))
+  /** With words in the search field the groups that match are listed one below the other (the tree would hide most of them). */
+  const found = $derived.by(() => {
+    const words = fold(groupQuery).split(/\s+/).filter(Boolean)
+    return words.length === 0 ? undefined : archive.entries.filter((e) => e.type === 'group' && words.every((w) => e.folded.includes(w)))
+  })
+  // A group that is chosen (here, by a link, or by the address) is made visible: the groups above it are opened.
+  $effect(() => {
+    const id = archive.groupId
+    void archive.byId
+    if (!id || id === NO_GROUP) return
+    const above = ancestors(archive.byId, id)
+    untrack(() => {
+      if ([...above].some((a) => !expanded.has(a))) expanded = new Set([...expanded, ...above])
+    })
+  })
+  const countOf = (id: string): number => archive.tree.members.get(id)?.size ?? 0
+  const scopeGroup = $derived(archive.groupId && archive.groupId !== NO_GROUP ? archive.byId.get(archive.groupId) : undefined)
+
   // The list is long (tens of thousands of objects are possible), so only the rows that can be seen are in the page, plus a few
   // more above and below: the rows have a fixed height, so the position of every row is known without drawing the others.
   const PITCH = 56 // the height of a row (52) and the gap below it (4)
@@ -177,11 +227,56 @@
   {/if}
 {/snippet}
 
-<div class="database">
+{#snippet groupRow(group: Entry, depth: number, branch: boolean, open: boolean)}
+  <div class="node" class:current={group.id === archive.groupId} style:padding-left="{depth * 14}px">
+    {#if branch}
+      <button class="twisty" aria-label="{group.title || 'Ohne Titel'} {open ? 'zuklappen' : 'aufklappen'}" aria-expanded={open} onclick={() => toggle(group.id)}>{open ? '▾' : '▸'}</button>
+    {:else}
+      <span class="twisty"></span>
+    {/if}
+    <button class="name" title={group.title} onclick={() => { archive.open(group.id); if (branch && !open) toggle(group.id) }}>
+      <span class="label" class:empty={!group.title}>{group.title || 'Ohne Titel'}</span>
+      <span class="n">{countOf(group.id).toLocaleString('de')}</span>
+    </button>
+  </div>
+{/snippet}
+
+<div class="database" class:collapsed={!treeOpen}>
+  <section class="pane groups">
+    {#if treeOpen}
+      <h2>
+        Gruppen
+        <button class="fold" title="Gruppen ausblenden" aria-label="Gruppen ausblenden" onclick={toggleTree}>‹</button>
+      </h2>
+      {#if archive.state === 'ready'}
+        <input class="search" type="search" placeholder="Gruppe suchen" bind:value={groupQuery} aria-label="Gruppe suchen" />
+        <div class="tree">
+          {#if !found}
+            <div class="node" class:current={!archive.groupId}>
+              <span class="twisty"></span>
+              <button class="name" onclick={() => (archive.groupId = undefined)}><span class="label">Alle Objekte</span><span class="n">{archive.tree.objects.toLocaleString('de')}</span></button>
+            </div>
+            <div class="node" class:current={archive.groupId === NO_GROUP}>
+              <span class="twisty"></span>
+              <button class="name" onclick={() => (archive.groupId = NO_GROUP)}><span class="label">Ohne Gruppe</span><span class="n">{archive.tree.ungrouped.toLocaleString('de')}</span></button>
+            </div>
+            {#each rows as row (row.key)}{@render groupRow(row.group, row.depth, row.branch, row.open)}{/each}
+          {:else if found.length === 0}
+            <p class="quiet">Keine Gruppe gefunden.</p>
+          {:else}
+            {#each found as group (group.id)}{@render groupRow(group, 0, false, false)}{/each}
+          {/if}
+        </div>
+      {/if}
+    {:else}
+      <button class="fold open" title="Gruppen einblenden" aria-label="Gruppen einblenden" onclick={toggleTree}>›<span>Gruppen</span></button>
+    {/if}
+  </section>
+
   <section class="pane list-pane">
     <h2>
       Objekte
-      <span class="count">{archive.state === 'ready' && !archive.progress ? (archive.query ? `${shown.length} von ${archive.entries.length}` : archive.entries.length) : ''}</span>
+      <span class="count">{archive.state === 'ready' && !archive.progress ? (archive.query || archive.groupId ? `${shown.length.toLocaleString('de')} von ${archive.tree.objects.toLocaleString('de')}` : archive.tree.objects.toLocaleString('de')) : ''}</span>
       {#if archive.syncing && archive.state === 'ready' && !archive.progress}<span class="spinner" role="status" aria-label="Wird aktualisiert" title="Wird aktualisiert"></span>{/if}
       {#if archive.liveState === 'live'}
         <span class="badge live" title="Änderungen am Online-Archiv erscheinen hier sofort.">Live</span>
@@ -194,6 +289,19 @@
     </h2>
     {@render progress()}
     <input class="search" type="search" placeholder="Titel suchen" bind:value={archive.query} aria-label="Titel suchen" />
+    {#if archive.groupId && archive.state === 'ready'}
+      <div class="scope">
+        {#if archive.groupId === NO_GROUP}
+          <span class="what">Objekte ohne Gruppe</span>
+        {:else if scopeGroup}
+          <span class="what" title={scopeGroup.title}>{scopeGroup.title || 'Ohne Titel'}</span>
+          <button class="refresh" disabled={archive.selectedId === scopeGroup.id} onclick={() => (archive.selectedId = scopeGroup.id)}>Details</button>
+        {:else if !archive.syncing && !archive.progress}
+          <span class="what">Diese Gruppe gibt es nicht (mehr).</span>
+        {/if}
+        <button class="clear" title="Alle Objekte zeigen" aria-label="Alle Objekte zeigen" onclick={() => (archive.groupId = undefined)}>×</button>
+      </div>
+    {/if}
     {#if archive.stale && archive.state === 'ready'}
       <p class="problem small">Keine Verbindung zum Online-Archiv. Du siehst den zuletzt geladenen Stand.</p>
     {/if}
@@ -204,7 +312,7 @@
     {:else if archive.entries.length === 0}
       <p class="quiet">Im Archiv ist noch kein Objekt.</p>
     {:else if shown.length === 0}
-      <p class="quiet">Nichts gefunden.</p>
+      <p class="quiet">{archive.query ? 'Nichts gefunden.' : archive.groupId ? 'Hier sind keine Objekte.' : 'Im Archiv ist noch kein Objekt.'}</p>
     {:else}
       <div class="scroller" bind:this={scroller} bind:clientHeight={viewport} onscroll={(event) => (top = event.currentTarget.scrollTop)}>
       <ul class="list" style:height="{shown.length * PITCH}px" style:padding-top="{first * PITCH}px">
@@ -244,7 +352,7 @@
           <dt>{row.label}</dt>
           <dd>
             {#each row.values as parts, i (i)}
-              <div>{#each parts as part}{#if part.href}<a href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>{:else if part.id}<button class="goto" onclick={() => (archive.selectedId = part.id)}>{part.text}</button>{:else}{part.text}{/if}{/each}</div>
+              <div>{#each parts as part}{#if part.href}<a href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>{:else if part.id}<button class="goto" onclick={() => archive.open(part.id!)}>{part.text}</button>{:else}{part.text}{/if}{/each}</div>
             {/each}
             {#if row.label === FIELD_NAMES.members && !allMembers && (archive.members.get(selected.id)?.length ?? 0) > MEMBERS_SHOWN}
               <button class="more" onclick={() => (allMembers = true)}>+ {(archive.members.get(selected.id)?.length ?? 0) - MEMBERS_SHOWN} weitere</button>
@@ -268,7 +376,35 @@
 {/if}
 
 <style>
-  .database { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; min-height: 0; }
+  .database { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-height: 0; }
+  .database.collapsed { grid-template-columns: 2.4rem repeat(2, minmax(0, 1fr)); }
+  .groups { padding: 12px 8px 12px 12px; }
+  .collapsed .groups { padding: 8px 0; align-items: center; }
+  .fold { all: unset; margin-left: auto; width: 1.4rem; height: 1.4rem; text-align: center; line-height: 1.3rem; border-radius: 999px; color: #666; cursor: pointer; font-size: 1.1rem; }
+  .fold:hover { background: #eef2fb; color: #36c; }
+  .fold:focus-visible { outline: 2px solid #36c; }
+  .fold.open { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; width: auto; height: auto; padding: 4px 0; }
+  .fold.open span { writing-mode: vertical-rl; font-size: 0.78rem; }
+  .groups .search { margin-right: 4px; }
+  .tree { flex: 1; min-height: 0; overflow: auto; padding-right: 4px; }
+  .node { display: flex; align-items: center; gap: 2px; border-radius: var(--r-m); }
+  .node.current { background: #eef3ff; }
+  .twisty { all: unset; flex: none; width: 1.2rem; text-align: center; color: #888; font-size: 0.8rem; cursor: pointer; }
+  span.twisty { cursor: default; }
+  button.twisty:hover { color: #36c; }
+  button.twisty:focus-visible { outline: 2px solid #36c; border-radius: 2px; }
+  .node .name { all: unset; box-sizing: border-box; flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; padding: 5px 4px; font-size: 0.85rem; line-height: 1.3; cursor: pointer; }
+  .node.current .name { color: #24b; font-weight: 500; }
+  .node .name:hover .label { text-decoration: underline; }
+  .node .name:focus-visible { outline: 2px solid #36c; border-radius: 4px; }
+  .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .label.empty { color: #999; }
+  .n { flex: none; font-size: 0.72rem; color: #999; }
+  .scope { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 4px 4px 4px 12px; border-radius: 999px; background: #eef3ff; font-size: 0.8rem; }
+  .scope .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #24b; }
+  .clear { all: unset; flex: none; width: 1.4rem; height: 1.4rem; text-align: center; line-height: 1.3rem; border-radius: 50%; color: #666; cursor: pointer; }
+  .clear:hover { background: #fff; color: #36c; }
+  .clear:focus-visible { outline: 2px solid #36c; }
   .pane { display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: var(--r-m); padding: 12px; }
   h2 { display: flex; align-items: center; gap: 8px; height: 1.6rem; margin: 0 0 8px; font-size: 1rem; }
   .count { font-size: 0.75rem; font-weight: 400; color: #888; }

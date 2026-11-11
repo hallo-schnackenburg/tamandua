@@ -6,7 +6,9 @@ import { checkParents, readObject } from '@tamandua/core'
 import { Mirror, type Derive, type MirrorBackend, type MirrorRecord, type Progress } from './archive-mirror.js'
 import { loadArchive, saveArchive } from './db.js'
 import { Live } from './live.js'
+import { buildTree } from './group-tree.js'
 import { placeOf } from './labels.js'
+import { NO_GROUP } from './route.js'
 
 export interface Entry {
   id: string
@@ -85,6 +87,8 @@ export class ArchiveDb {
   entries = $state.raw<Entry[]>([])
   query = $state('')
   selectedId = $state<string>()
+  /** The group the list is limited to (with what is in the groups below it), `NO_GROUP` for the objects that are in none, or none: all objects. */
+  groupId = $state<string>()
   #mirror: Mirror
   #cache = new Map<string, Entry>()
   #timer: ReturnType<typeof setInterval> | undefined
@@ -112,10 +116,31 @@ export class ArchiveDb {
     this.#mirror.onProgress = (progress) => (this.progress = progress && progress.total >= SHOW_PROGRESS_FROM ? progress : undefined)
   }
 
-  /** The entries that match the search words (all of them must be in the title), by title. */
+  /** The groups as a tree, and which objects are in which group. */
+  tree = $derived.by(() => buildTree(this.entries))
+
+  /** Id → entry. */
+  byId = $derived(new Map(this.entries.map((e) => [e.id, e])))
+
+  /** The objects of the chosen group (groups are not in the list: they are in the tree). */
+  scoped = $derived.by((): Entry[] => {
+    const objects = this.entries.filter((e) => e.type !== 'group')
+    if (!this.groupId) return objects
+    if (this.groupId === NO_GROUP) return objects.filter((e) => !e.parents.some((p) => this.tree.groups.has(p)))
+    const inside = this.tree.members.get(this.groupId)
+    return inside ? objects.filter((e) => inside.has(e.id)) : []
+  })
+
+  /** The objects of the chosen group that match the search words (all of them must be in the title), by title. */
   get shown(): Entry[] {
     const words = fold(this.query).split(/\s+/).filter(Boolean)
-    return this.entries.filter((e) => words.every((w) => e.folded.includes(w)))
+    return words.length === 0 ? this.scoped : this.scoped.filter((e) => words.every((w) => e.folded.includes(w)))
+  }
+
+  /** Shows an object in the detail view. A group is also the one the list is limited to. */
+  open(id: string): void {
+    this.selectedId = id
+    if (this.byId.get(id)?.type === 'group') this.groupId = id
   }
 
   /** Group id → the objects that name it as a parent (in the order of the list). Only the objects name their groups; this is the other way round. */
@@ -143,7 +168,7 @@ export class ArchiveDb {
   })
 
   get selected(): Entry | undefined {
-    return this.entries.find((e) => e.id === this.selectedId)
+    return this.selectedId ? this.byId.get(this.selectedId) : undefined
   }
 
   /** Shows what the browser kept, then keeps the copy up to date for as long as the page is open (until `stop`). */
