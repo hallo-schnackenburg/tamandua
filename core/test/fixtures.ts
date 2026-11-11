@@ -71,7 +71,7 @@ export function external(): Obj {
     subtype: 'photo',
     title: 'Fähre bei Schnackenburg',
     date: '1958',
-    holder: { name: 'Niedersächsisches Landesarchiv', type: 'business' },
+    original: { holder: { name: 'Niedersächsisches Landesarchiv', type: 'business' }, reference: 'Hann. 180 Lüneburg Nr. 1234' },
     storage: 'external',
     external: [
       {
@@ -82,6 +82,18 @@ export function external(): Obj {
         retrieved: '2026-11-09',
       },
     ],
+  }
+}
+
+/** An album: a group has no files. */
+export function album(): Obj {
+  return {
+    id: '01JC8Z6C4S2K9Y5G7V1A3M8P0F',
+    type: 'group',
+    subtype: 'album',
+    title: 'Fotoalbum Familie Meier',
+    date: '1950/1970',
+    original: { holder: { name: 'Stadtarchiv Schnackenburg', type: 'business' }, reference: 'Fotos/Album 3' },
   }
 }
 

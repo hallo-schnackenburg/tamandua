@@ -30,7 +30,7 @@ export type ToolCall =
   | { tool: 'geocode'; object: number; for: GeocodeFor; subject?: string; query: string }
   | { tool: 'set_geocode'; object: number; for: GeocodeFor; subject?: string; lat: number; lon: number; precision: 'exact' | 'street' | 'town' | 'region'; label: string; source: string }
 
-/** Which place of an object gets the point: its own location, origin, holder, owner, or one of its subjects. */
+/** Which place of an object gets the point: its own location, origin, the holder of its original, owner, or one of its subjects. */
 export type GeocodeFor = 'object' | 'origin' | 'holder' | 'owner' | 'subject'
 const GEOCODE_FOR: readonly GeocodeFor[] = ['object', 'origin', 'holder', 'owner', 'subject']
 
@@ -69,10 +69,13 @@ export function parseChatRequest(data: unknown): ChatRequest {
   }
 }
 
+// The chat does not make groups yet (they have no files, and the app creates objects from files).
+const CHAT_TYPES = Object.keys(OBJECT_TYPES).filter((type) => type !== 'group')
 const TYPE_LIST = Object.entries(OBJECT_TYPES)
+  .filter(([type]) => type !== 'group')
   .map(([type, subtypes]) => `"${type}"${subtypes.length ? ` (subtypes: ${subtypes.join(', ')})` : ''}`)
   .join(', ')
-const SUBTYPES = [...new Set(Object.values(OBJECT_TYPES).flat())]
+const SUBTYPES = [...new Set(Object.entries(OBJECT_TYPES).filter(([type]) => type !== 'group').flatMap(([, subtypes]) => subtypes))]
 
 export const SYSTEM_PROMPT = `You help volunteers of a town archive (Stadtarchiv Schnackenburg) to describe scanned images and documents.
 For every message you answer ONLY by calling tools. The app carries them out; you never change anything yourself.
@@ -88,13 +91,13 @@ Tools:
 - geocode: look up the coordinates of a place on the map. The app sets the result and tells the user, so do not repeat it. Use it only when the user asks for coordinates or the exact position.
 - say: answer or ask a short question. Use it when something is unclear, when the user asks something, or in addition to other calls if you must point something out. The app itself confirms every object created and every field set, so do not repeat that; say something only for assumptions, hints or questions.
 
-Fields (YAML keys, in English): title, description, date, location, origin, holder, owner, subjects, notes; documents also recipient and language (e.g. "de").
+Fields (YAML keys, in English): title, description, date, location, origin, original, owner, subjects, notes; documents also recipient and language (e.g. "de").
 - date is EDTF text: "1965", "1965-01", "1965-01-03", "196X" (decade), "1960/1969" (range), a trailing "?" for uncertain, "~" for approximate. Always as text.
 - location is the place the object relates to for the archive, shown on the map: where a photo was taken, where a shown thing stands today. Free text, e.g. "Schnackenburg, Marktplatz".
 - origin is who made the object and where, as an object {name, type, location}: for a photo the photographer and the place, for a letter the sender and the place, for a brochure the company and its seat. Example: {"name": "Max Ketterer", "type": "business", "location": "Leipzig-Reudnitz"}. It is not where the object was found; put that into notes.
-- holder is who has the original now and where, same shape as origin: the town archive, a family, a collector, a gallery. owner is who it belongs to. Fill only what the user says; never infer one from the other. Examples: "Leihgabe der Familie Müller, liegt jetzt im Stadtarchiv" gives holder {"name": "Stadtarchiv Schnackenburg", "type": "business"} and owner {"name": "Familie Müller", "type": "person"}; "Gemälde gehört Herrn Zenziper, hängt in der Galerie Elbe 5" gives owner {"name": "Zenziper", "type": "person"} and holder {"name": "Galerie Elbe 5", "type": "business"}. Without such a statement leave both out.
+- original is where the original is (there is only one), an object {holder, reference, uri, note}: holder is who has it now and where, same shape as origin (the town archive, a family, a collector, a gallery), reference is the call number (Signatur) there, uri a link to its catalogue entry. owner is who it belongs to. Fill only what the user says; never infer one from the other. Examples: "Leihgabe der Familie Müller, liegt jetzt im Stadtarchiv" gives original {"holder": {"name": "Stadtarchiv Schnackenburg", "type": "business"}} and owner {"name": "Familie Müller", "type": "person"}; "Gemälde gehört Herrn Zenziper, hängt in der Galerie Elbe 5" gives owner {"name": "Zenziper", "type": "person"} and original {"holder": {"name": "Galerie Elbe 5", "type": "business"}}. To add or change the holder or the call number, patch the field original with the whole object as value and the current one as old. Without such a statement leave both out.
 - subjects is a list of the things the object shows or mentions, each {name, type, note, location}: people, places, buildings, businesses, events, things. type is one of: ${ENTITY_TYPES.join(', ')}. Example: [{"name": "Konditorei Müller", "type": "business", "note": "am Markt"}]. To add one, send the whole list as value and the current list as old.
-- An object that lives elsewhere has storage "external" and the list external of places {uri, site, type, reference, note, retrieved}. type of a place is one of: ${EXTERNAL_TYPES.join(', ')} (archive: archive, library, museum with catalogue entries; platform: video, photo or audio platform; website: any other page). site is the name, e.g. "Deutsche Digitale Bibliothek", "YouTube". Do not take holder from it unless the user says who has the original. To add or change a place, patch the field external with the whole list as value and the current list as old. An empty object (new, added by the user or by you) has nothing yet, neither a type nor files: as soon as the user says what it is, set type and the other fields with patch; if it lives elsewhere (the user says so, with or without a web address), also set storage to "external" and external to the list of places, as far as known, e.g. [{"site": "Wendlandarchiv", "type": "archive"}].
+- An object that lives elsewhere has storage "external" and the list external of places {uri, site, type, reference, note, retrieved}. type of a place is one of: ${EXTERNAL_TYPES.join(', ')} (archive: archive, library, museum with catalogue entries; platform: video, photo or audio platform; website: any other page). site is the name, e.g. "Deutsche Digitale Bibliothek", "YouTube". Do not take original.holder from it unless the user says who has the original. To add or change a place, patch the field external with the whole list as value and the current list as old. An empty object (new, added by the user or by you) has nothing yet, neither a type nor files: as soon as the user says what it is, set type and the other fields with patch; if it lives elsewhere (the user says so, with or without a web address), also set storage to "external" and external to the list of places, as far as known, e.g. [{"site": "Wendlandarchiv", "type": "archive"}].
 - notes is only for what the user explicitly says and that fits no other field (e.g. where it was found, how it came into the archive). Never write file names, upload details or your own remarks into notes, and never use notes when another field fits. File names may hint at a date; mention that with a say call instead of writing it anywhere.
 - The message context starts with today's date. Turn "heute" and "gestern" into that concrete date ("2026-11-09" style, or the German form the user gave); other relative dates ("letzten Sommer") are not guessed, ask with a say call.
 - Never write a placeholder such as "<UNKNOWN>", "unbekannt" or "?" into a field. If you do not know a value, leave the field out.
@@ -118,7 +121,7 @@ export const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        type: { type: 'string', enum: Object.keys(OBJECT_TYPES) },
+        type: { type: 'string', enum: CHAT_TYPES },
         subtype: { type: 'string', enum: SUBTYPES, description: 'Only if clear. Must belong to the type.' },
         together: { type: 'boolean', description: 'Documents: all files are pages of one object (default true).' },
         fields: {
@@ -166,7 +169,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         object: { type: 'integer', description: 'The number of the object.' },
-        for: { enum: GEOCODE_FOR, description: 'object: the object\'s own location; origin, holder, owner: that entity\'s place; subject: one of the subjects (give its name).' },
+        for: { enum: GEOCODE_FOR, description: 'object: the object\'s own location; origin, holder (the holder of the original), owner: that entity\'s place; subject: one of the subjects (give its name).' },
         subject: { type: 'string', description: 'Only for "subject": the name of the subject as it is in the object.' },
         query: { type: 'string', description: 'What to search for, with the town, e.g. "Aussichtsturm, Schnackenburg".' },
       },
@@ -265,7 +268,7 @@ export function toToolCalls(response: unknown): ToolCall[] {
     } else if (
       block.name === 'create_object' &&
       // The type may be missing (an object without files): it is not guessed, the object stays without one.
-      (typeof input.type === 'string' ? input.type in OBJECT_TYPES : input.type === undefined)
+      (typeof input.type === 'string' ? CHAT_TYPES.includes(input.type) : input.type === undefined)
     ) {
       const type = typeof input.type === 'string' ? (input.type as ObjectType) : undefined
       const subtypes: readonly string[] = type ? OBJECT_TYPES[type] : []

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { locate, readField, readValue, validateObjectYaml } from '@tamandua/core'
   import type { Diagnostic } from '@codemirror/lint'
+  import { formatDate } from './dates.js'
   import Editor from './Editor.svelte'
   import { objectLabel, placeOf } from './labels.js'
   import { validityOf } from './validity.js'
@@ -44,7 +45,7 @@
       place: external ? placeOf(readValue(object.text, 'external')) : '',
       title: readField(object.text, 'title'),
       kind: objectLabel(type, readField(object.text, 'subtype')),
-      date: date === undefined || date === null ? '' : String(date),
+      date: date === undefined || date === null ? '' : formatDate(String(date)),
       files,
       validity: validityOf(object.text),
     }

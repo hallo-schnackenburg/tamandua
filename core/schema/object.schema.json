@@ -9,9 +9,13 @@
   "allOf": [
     { "$ref": "#/$defs/common" },
     {
-      "if": { "properties": { "storage": { "const": "external" } }, "required": ["storage"] },
-      "then": { "$ref": "#/$defs/stored_elsewhere" },
-      "else": { "$ref": "#/$defs/stored_here" }
+      "if": { "properties": { "type": { "const": "group" } }, "required": ["type"] },
+      "then": { "$ref": "#/$defs/group" },
+      "else": {
+        "if": { "properties": { "storage": { "const": "external" } }, "required": ["storage"] },
+        "then": { "$ref": "#/$defs/stored_elsewhere" },
+        "else": { "$ref": "#/$defs/stored_here" }
+      }
     },
     {
       "if": { "properties": { "type": { "const": "document" } }, "required": ["type"] },
@@ -26,12 +30,18 @@
       "properties": {
         "id": {
           "description": "ULID. Stable and meaningless: never derived from file names or call numbers.",
-          "type": "string",
-          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+          "$ref": "#/$defs/ulid"
+        },
+        "parents": {
+          "description": "The groups (album, collection, ...) this object belongs to; an object can be in several. Only this side is written: the group does not list its members. A group can be in groups too, but not in itself, not through others (checked in CI, not expressible here).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ulid" }
         },
         "type": {
           "description": "Object type. Decides which further fields and which files are allowed.",
-          "enum": ["image", "document"]
+          "enum": ["image", "document", "group"]
         },
         "subtype": {
           "description": "Optional refinement of the type, e.g. photo or letter. The values are listed in archive.yaml.",
@@ -40,7 +50,7 @@
         },
         "title": { "type": "string", "minLength": 1 },
         "description": { "type": "string" },
-        "date": { "$ref": "#/$defs/edtf_date" },
+        "date": { "$ref": "#/$defs/date" },
         "location": {
           "description": "The place the object relates to for the archive, as free text: where a photo was taken, where something shown stands. This is the place on the map.",
           "type": "string"
@@ -50,9 +60,9 @@
           "description": "Who made the object and where: the photographer and the place of a photo, the sender and the place of a letter, the company and its seat on a brochure. Not where it was found.",
           "$ref": "#/$defs/entity"
         },
-        "holder": {
-          "description": "Who has the original now and where: the town archive, a family, a collector, a gallery. Possession, not ownership.",
-          "$ref": "#/$defs/entity"
+        "original": {
+          "description": "Where the original is, if there is one (there is only one): who has it now, and under which call number.",
+          "$ref": "#/$defs/original"
         },
         "owner": {
           "description": "Who the original belongs to, e.g. when that differs from the holder (loan, deposit).",
@@ -79,6 +89,11 @@
         },
         "files": { "type": "array" }
       }
+    },
+
+    "group": {
+      "description": "A group of objects (an album, a collection, ...). It is described like any object (title, date, origin, original, ...) but has no files and no storage of its own.",
+      "properties": { "files": false, "storage": false, "external": false }
     },
 
     "stored_here": {
@@ -127,6 +142,22 @@
         "reference": { "description": "Call number or id at that place.", "type": "string", "minLength": 1 },
         "note": { "description": "Free text about this place, e.g. where in it to look.", "type": "string", "minLength": 1 },
         "retrieved": { "description": "The day somebody last saw the content there (YYYY-MM-DD).", "type": "string", "format": "date" }
+      },
+      "additionalProperties": false
+    },
+
+    "original": {
+      "description": "The one place where the original is kept. Everything is optional, but an entry says at least something.",
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "holder": {
+          "description": "Who has the original now and where: the town archive, a family, a collector, a gallery. Possession, not ownership.",
+          "$ref": "#/$defs/entity"
+        },
+        "reference": { "description": "Call number (Signatur) at the holder.", "type": "string", "minLength": 1 },
+        "uri": { "description": "Link to the holder's catalogue entry.", "type": "string", "pattern": "^https?://\\S+$" },
+        "note": { "description": "Free text, e.g. shelf or box.", "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },
@@ -264,9 +295,11 @@
       "additionalProperties": false
     },
 
+    "ulid": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
 
-    "edtf_date": {
+    "date": {
       "description": "EDTF date: 1963, 1963-07, 1963-07-14, 196X, 1963?, 1963~, or an interval like 1960/1969. Validated by form only.",
       "type": "string",
       "pattern": "^(?:\\d{4}|\\d{3}X|\\d{2}XX)(?:-(?:\\d{2}|XX)(?:-(?:\\d{2}|XX))?)?[?~%]?(?:/(?:\\d{4}|\\d{3}X|\\d{2}XX)(?:-(?:\\d{2}|XX)(?:-(?:\\d{2}|XX))?)?[?~%]?)?$"

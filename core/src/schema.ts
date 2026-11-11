@@ -25,6 +25,7 @@ function toIssue(error: ErrorObject): Issue {
       return { path: child(path, String(params.additionalProperty)), message: `unknown field "${params.additionalProperty}"` }
     case 'false schema':
       if (path.endsWith('/external')) return { path, message: 'only allowed when storage is "external"' }
+      if (path.endsWith('/files') || path.endsWith('/storage')) return { path, message: 'a group has no files and no storage of its own' }
       return { path, message: 'not allowed here' }
     case 'required':
       return { path, message: `missing field "${params.missingProperty}"` }

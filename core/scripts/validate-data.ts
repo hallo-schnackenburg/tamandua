@@ -5,7 +5,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { objectPath, validateObjectYaml } from '../src/index.js'
+import { checkParents, objectPath, readObject, validateObjectYaml, type GroupNode } from '../src/index.js'
 
 const root = process.argv[2]
 if (!root) {
@@ -23,6 +23,8 @@ function* walk(dir: string): Generator<string> {
 
 let problems = 0
 let checked = 0
+const nodes: GroupNode[] = []
+const fileOf = new Map<string, string>()
 const fail = (file: string, message: string) => {
   problems++
   // The "::error" form shows up as an annotation on the pull request.
@@ -53,8 +55,16 @@ if (found) {
       fail(file, `The id ${id} belongs in ${objectPath(id)}.`)
     }
     for (const issue of validateObjectYaml(text)) fail(file, `${issue.path || '/'}: ${issue.message}`)
+    const data = readObject(text)
+    if (id && data) {
+      nodes.push({ id, type: data.type, parents: data.parents })
+      fileOf.set(id, file)
+    }
   }
 }
+
+// What only all objects together can tell: the groups an object belongs to exist, and they do not lead back to themselves.
+for (const issue of checkParents(nodes)) fail(fileOf.get(issue.id) ?? issue.id, `${issue.path}: ${issue.message}`)
 
 console.log(`${checked} object file(s) checked, ${problems} problem(s).`)
 process.exit(problems === 0 ? 0 : 1)

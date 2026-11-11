@@ -2,6 +2,7 @@
   import type { ArchiveDb, Entry } from './database.svelte.js'
   import Lightbox from './Lightbox.svelte'
   import { bucketPreview } from './viewer.js'
+  import { formatDate } from './dates.js'
   import { ENTITY_NAMES, EXTERNAL_NAMES, FIELD_NAMES, objectLabel } from './labels.js'
 
   // The database: the objects that are already in the archive. The list with its search is on the left,
@@ -24,6 +25,8 @@
   interface Part {
     text: string
     href?: string
+    /** Another object of the archive: the text is a button that shows it. */
+    id?: string
   }
   const toParts = (value: string | Part[]): Part[] => (typeof value === 'string' ? (value ? [{ text: value }] : []) : value)
 
@@ -52,6 +55,26 @@
     return pieces.flatMap((piece, i) => (i === 0 ? [piece] : [{ text: ', ' }, piece]))
   }
 
+  /** Where the original is: "Stadtarchiv Schnackenburg (Betrieb), Signatur Fotos/Album 3, https://…, Regal 4"; the address is a link. */
+  function original(value: unknown): Part[] {
+    if (!isData(value)) return toParts(text(value))
+    const uri = text(value.uri)
+    const pieces: Part[] = [
+      { text: entity(value.holder) },
+      { text: text(value.reference) && `${FIELD_NAMES.reference} ${text(value.reference)}` },
+      { text: uri, href: uri ? linkOf(uri) : undefined },
+      { text: text(value.note) },
+    ].filter((piece) => piece.text)
+    return pieces.flatMap((piece, i) => (i === 0 ? [piece] : [{ text: ', ' }, piece]))
+  }
+
+  const MEMBERS_SHOWN = 50
+  let allMembers = $state(false)
+  $effect(() => {
+    void archive.selectedId
+    allMembers = false
+  })
+
   /** The fields of an object as labelled lines; a list has one line per item. */
   function lines(entry: Entry): { label: string; values: Part[][] }[] {
     const get = (key: string): unknown => entry.data[key]
@@ -62,23 +85,28 @@
     const geo = get('geocode')
     const files = get('files')
     const count = Array.isArray(files) ? files.length : 0
+    const all = archive.members.get(entry.id) ?? []
+    const members = allMembers ? all : all.slice(0, MEMBERS_SHOWN)
     const rows: { label: string; values: (string | Part[])[] }[] = [
       { label: FIELD_NAMES.title, values: [entry.title] },
       { label: 'Art', values: [objectLabel(entry.type, entry.subtype)] },
       { label: FIELD_NAMES.description, values: list('description', text) },
-      { label: FIELD_NAMES.date, values: list('date', text) },
+      { label: FIELD_NAMES.date, values: list('date', (value) => formatDate(text(value))) },
       { label: FIELD_NAMES.location, values: list('location', text) },
       { label: FIELD_NAMES.geocode, values: isData(geo) ? [`${text(geo.lat)}, ${text(geo.lon)}${geo.precision ? ` (${text(geo.precision)})` : ''}`] : [] },
       { label: FIELD_NAMES.origin, values: list('origin', entity) },
       { label: FIELD_NAMES.recipient, values: list('recipient', text) },
       { label: FIELD_NAMES.language, values: list('language', text) },
-      { label: FIELD_NAMES.holder, values: list('holder', entity) },
+      { label: FIELD_NAMES.original, values: list('original', original) },
       { label: FIELD_NAMES.owner, values: list('owner', entity) },
       { label: FIELD_NAMES.subjects, values: list('subjects', entity) },
       { label: FIELD_NAMES.storage, values: [entry.external ? 'extern, nicht in unserem Speicher' : 'hier'] },
       { label: FIELD_NAMES.external, values: list('external', place) },
       { label: 'Dateien', values: count > 0 ? [`${count} ${count === 1 ? 'Datei' : 'Dateien'}`] : [] },
+      { label: FIELD_NAMES.parents, values: entry.parents.map((id): Part[] => [{ text: archive.entries.find((e) => e.id === id)?.title || id, id: archive.entries.some((e) => e.id === id) ? id : undefined }]) },
+      { label: FIELD_NAMES.members, values: members.map((e): Part[] => [{ text: e.title || 'Ohne Titel', id: e.id }]) },
       { label: FIELD_NAMES.notes, values: list('notes', text) },
+      { label: 'Problem', values: archive.problems.get(entry.id) ?? [] },
       { label: 'ID', values: [entry.id] },
     ]
     return rows.map((row) => ({ label: row.label, values: row.values.map(toParts).filter((parts) => parts.length > 0) })).filter((row) => row.values.length > 0)
@@ -184,7 +212,7 @@
           <li>
             <button class="row" class:current={entry.id === archive.selectedId} onclick={() => (archive.selectedId = entry.id)}>
               <span class="title" class:empty={!entry.title}>{entry.title || 'Ohne Titel'}</span>
-              <span class="sub">{[objectLabel(entry.type, entry.subtype), entry.date, entry.external && `extern${entry.place ? `: ${entry.place}` : ''}`].filter(Boolean).join(' · ')}</span>
+              <span class="sub">{[objectLabel(entry.type, entry.subtype), entry.date && formatDate(entry.date), entry.external && `extern${entry.place ? `: ${entry.place}` : ''}`].filter(Boolean).join(' · ')}</span>
             </button>
           </li>
         {/each}
@@ -216,8 +244,11 @@
           <dt>{row.label}</dt>
           <dd>
             {#each row.values as parts, i (i)}
-              <div>{#each parts as part}{#if part.href}<a href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>{:else}{part.text}{/if}{/each}</div>
+              <div>{#each parts as part}{#if part.href}<a href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>{:else if part.id}<button class="goto" onclick={() => (archive.selectedId = part.id)}>{part.text}</button>{:else}{part.text}{/if}{/each}</div>
             {/each}
+            {#if row.label === FIELD_NAMES.members && !allMembers && (archive.members.get(selected.id)?.length ?? 0) > MEMBERS_SHOWN}
+              <button class="more" onclick={() => (allMembers = true)}>+ {(archive.members.get(selected.id)?.length ?? 0) - MEMBERS_SHOWN} weitere</button>
+            {/if}
           </dd>
         {/each}
       </dl>
@@ -286,5 +317,8 @@
   dt { color: #888; }
   dd { margin: 0; overflow-wrap: anywhere; }
   dd a { color: #36c; text-decoration: none; }
+  .goto { all: unset; color: #36c; cursor: pointer; }
+  .goto:hover { text-decoration: underline; }
+  .goto:focus-visible { outline: 2px solid #36c; border-radius: 2px; }
   dd a:hover { text-decoration: underline; }
 </style>

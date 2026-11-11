@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { validateObject } from '../src/schema.js'
-import { clone, external, file, letter, photo, preview, sha } from './fixtures.js'
+import { album, clone, external, file, letter, photo, preview, sha } from './fixtures.js'
 
 type Obj = Record<string, any>
 
@@ -15,6 +15,7 @@ describe('valid objects', () => {
   it('accepts a photo', () => expect(validateObject(photo())).toEqual([]))
   it('accepts a multi-page letter', () => expect(validateObject(letter())).toEqual([]))
   it('accepts an object that lives elsewhere', () => expect(validateObject(external())).toEqual([]))
+  it('accepts a group', () => expect(validateObject(album())).toEqual([]))
 })
 
 describe('storage', () => {
@@ -207,11 +208,53 @@ describe('files and variants', () => {
   })
 })
 
-describe('holder and owner', () => {
-  it('are entities with a name', () => {
-    expect(messages(photo(), (o) => (o.holder = { name: 'Stadtarchiv', type: 'business' }))).toEqual([])
+describe('original and owner', () => {
+  it('has the holder as an entity with a name, and a call number', () => {
+    expect(messages(photo(), (o) => (o.original = { holder: { name: 'Stadtarchiv', type: 'business' }, reference: 'Nr. 5', note: 'Regal 4' }))).toEqual([])
+    expect(messages(photo(), (o) => (o.original = { holder: { type: 'business' } }))).toContain('/original/holder: missing field "name"')
+  })
+
+  it('may say only the call number, but not nothing', () => {
+    expect(messages(photo(), (o) => (o.original = { reference: 'Nr. 5' }))).toEqual([])
+    expect(messages(photo(), (o) => (o.original = {}))[0]).toMatch(/^\/original: /)
+  })
+
+  it('is one place, not a list, and knows no other fields', () => {
+    expect(messages(photo(), (o) => (o.original = [{ reference: 'Nr. 5' }]))).toContain('/original: must be object')
+    expect(messages(photo(), (o) => (o.original = { site: 'Stadtarchiv' }))).toContain('/original/site: unknown field "site"')
+  })
+
+  it('replaces "holder" on the object', () => {
+    expect(messages(photo(), (o) => (o.holder = { name: 'Stadtarchiv' }))).toContain('/holder: unknown field "holder"')
+  })
+
+  it('has the owner as an entity with a name', () => {
     expect(messages(photo(), (o) => (o.owner = { type: 'person' }))).toContain('/owner: missing field "name"')
   })
+})
+
+describe('groups', () => {
+  const ID = '01JC8Z6C4S2K9Y5G7V1A3M8P0F'
+
+  it('have no files, no storage and no external places', () => {
+    expect(messages(album(), (o) => (o.files = [file('main', 'a')]))).toContain('/files: a group has no files and no storage of its own')
+    expect(messages(album(), (o) => (o.storage = 'local'))).toContain('/storage: a group has no files and no storage of its own')
+    expect(messages(album(), (o) => (o.external = external().external))).toContain('/external: only allowed when storage is "external"')
+  })
+
+  it('can be in groups, like any object', () => expect(messages(album(), (o) => (o.parents = [ID.replace('F', 'G')]))).toEqual([]))
+
+  it('are not needed by an object: it can say that it is in several groups', () => {
+    expect(messages(photo(), (o) => (o.parents = [ID, '01JC8Z6C4S2K9Y5G7V1A3M8P0G']))).toEqual([])
+  })
+
+  it('must name their parents once, as ids', () => {
+    expect(messages(photo(), (o) => (o.parents = [ID, ID]))[0]).toMatch(/^\/parents: must NOT have duplicate items/)
+    expect(messages(photo(), (o) => (o.parents = ['album']))[0]).toMatch(/^\/parents\/0: /)
+    expect(messages(photo(), (o) => (o.parents = []))[0]).toMatch(/^\/parents: /)
+  })
+
+  it('take any subtype, as every object does', () => expect(messages(album(), (o) => (o.subtype = 'scrapbook'))).toEqual([]))
 })
 
 describe('origin and subjects', () => {

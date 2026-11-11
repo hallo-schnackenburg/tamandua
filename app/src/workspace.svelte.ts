@@ -570,17 +570,21 @@ export class Workspace {
     } catch {
       return
     }
+    let restored = 0
     for (const remote of list.filter((e) => e.login === me && e.state !== 'merged' && !e.closed && !this.sessions.some((s) => s.id === e.slug))) {
       try {
         const content = await this.#backend.erfassung(remote.number)
         // Somebody may have made it here while we waited.
         if (this.sessions.some((s) => s.id === remote.slug)) continue
         this.#bringBack(remote, content)
+        restored++
       } catch (error) {
-        if (error instanceof SignedOut) return
+        if (error instanceof SignedOut) break
         this.#say('status', `Die Erfassung „${remote.name}“ konnte nicht aus GitHub geladen werden: ${(error as Error).message}`)
       }
     }
+    // One message for all of them.
+    if (restored > 0) this.#say('status', restored === 1 ? 'Eine Erfassung wurde aus GitHub geladen.' : `${restored} Erfassungen wurden aus GitHub geladen.`)
   }
 
   #bringBack(remote: RemoteErfassung, content: RemoteContent) {
@@ -608,8 +612,6 @@ export class Workspace {
       }
     }
     this.#schedule()
-    const n = content.objects.length
-    this.#say('status', `Die Erfassung „${session.name}“ wurde aus GitHub geladen (${n === 1 ? 'ein Objekt' : `${n} Objekte`}).`)
   }
 
   /** The preview of a restored file, from the bucket: its preview variant, or the file itself if it is an image that small. */
@@ -1140,6 +1142,18 @@ export class Workspace {
       old = list
       value = list.map((s, i) => (i === index ? { ...(s as object), geocode: point } : s))
       where = `Bezug „${(list[index] as { name: string }).name}“`
+    } else if (call.for === 'holder') {
+      // The holder is part of the original: original.holder.
+      field = 'original'
+      const original = readValue(object.text, 'original')
+      const holder = typeof original === 'object' && original !== null && !Array.isArray(original) ? (original as { holder?: unknown }).holder : undefined
+      if (typeof holder !== 'object' || holder === null || Array.isArray(holder)) {
+        out.notes.push(`${refer(object)}: ${FIELD_NAMES.holder} ist nicht angegeben, deshalb habe ich keine Koordinaten gesetzt.`)
+        return undefined
+      }
+      old = original
+      value = { ...(original as object), holder: { ...holder, geocode: point } }
+      where = FIELD_NAMES.holder
     } else {
       field = call.for
       const entity = readValue(object.text, call.for)

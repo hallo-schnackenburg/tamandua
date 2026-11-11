@@ -2,7 +2,7 @@
 // (archive-mirror.ts), which is kept equal to main of the data repository; the list and the title search
 // work on that copy.
 
-import { readObject } from '@tamandua/core'
+import { checkParents, readObject } from '@tamandua/core'
 import { Mirror, type Derive, type MirrorBackend, type MirrorRecord, type Progress } from './archive-mirror.js'
 import { loadArchive, saveArchive } from './db.js'
 import { Live } from './live.js'
@@ -18,6 +18,8 @@ export interface Entry {
   subtype?: string
   title: string
   date?: string
+  /** The groups this object is in (ids). */
+  parents: string[]
   external: boolean
   /** Where an external object is, in a word. */
   place: string
@@ -47,6 +49,7 @@ export function entryOf(record: MirrorRecord): Entry {
     subtype: word(data.subtype),
     title,
     date: typeof date === 'string' || typeof date === 'number' ? String(date) : undefined,
+    parents: Array.isArray(data.parents) ? data.parents.filter((p): p is string => typeof p === 'string') : [],
     external,
     place: external ? placeOf(data.external) : '',
     folded: fold(title),
@@ -114,6 +117,30 @@ export class ArchiveDb {
     const words = fold(this.query).split(/\s+/).filter(Boolean)
     return this.entries.filter((e) => words.every((w) => e.folded.includes(w)))
   }
+
+  /** Group id → the objects that name it as a parent (in the order of the list). Only the objects name their groups; this is the other way round. */
+  members = $derived.by(() => {
+    const map = new Map<string, Entry[]>()
+    for (const entry of this.entries) {
+      for (const parent of entry.parents) {
+        const list = map.get(parent)
+        if (list) list.push(entry)
+        else map.set(parent, [entry])
+      }
+    }
+    return map
+  })
+
+  /** Object id → what is wrong with its parents (a group that is not there, is none, or leads back to itself). */
+  problems = $derived.by(() => {
+    const map = new Map<string, string[]>()
+    for (const issue of checkParents(this.entries)) {
+      const list = map.get(issue.id)
+      if (list) list.push(issue.message)
+      else map.set(issue.id, [issue.message])
+    }
+    return map
+  })
 
   get selected(): Entry | undefined {
     return this.entries.find((e) => e.id === this.selectedId)

@@ -10,16 +10,22 @@ export const SUBTYPE_NAMES: Record<string, string> = {
   protocol: 'Protokoll',
   note: 'Notiz',
   brochure: 'Broschüre',
+  album: 'Album',
+  collection: 'Sammlung',
 }
 
-export const TYPE_NAMES: Record<string, string> = { image: 'Bild', document: 'Dokument' }
+export const TYPE_NAMES: Record<string, string> = { image: 'Bild', document: 'Dokument', group: 'Gruppe' }
 
 export const FIELD_NAMES: Record<string, string> = {
   title: 'Titel',
   date: 'Datum',
   subtype: 'Untertyp',
   origin: 'Herkunft',
+  original: 'Original',
   holder: 'Aufbewahrung',
+  reference: 'Signatur',
+  parents: 'Gehört zu',
+  members: 'Enthält',
   owner: 'Eigentümer',
   subjects: 'Bezüge',
   recipient: 'Empfänger',

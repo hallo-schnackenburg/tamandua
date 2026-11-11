@@ -9,6 +9,10 @@ object_types:
     - note
     - protocol
     - brochure
+  # A group holds other objects (the objects point to it with "parents"): it has a description of its own, but no files.
+  group:
+    - album
+    - collection
 
 entity_types:
   - person
