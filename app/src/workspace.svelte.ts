@@ -13,7 +13,7 @@ import { newEmptyText, newObjectText } from './template.js'
 import { validityOf } from './validity.js'
 import type { FileStore } from './uploader.js'
 import { SignedOut } from './api.js'
-import { Locked, type Backend, type Removed, type RemoteContent, type RemoteErfassung, type SessionRef, type User } from './backend.js'
+import { type Backend, type Removed, type RemoteContent, type RemoteErfassung, type SessionRef, type User } from './backend.js'
 
 /** A file that was dropped and hashed. It is identified by its SHA-256. */
 export interface FileRecord {
@@ -49,8 +49,8 @@ export interface ObjectRecord {
 
 /**
  * A named unit of work: one branch and one pull request in the data repository. `id` is the slug that the
- * branch is named after. Open sessions take changes; a submitted session is frozen (its pull request is
- * under review); a merged one is part of the archive.
+ * branch is named after. Open and submitted sessions take changes (a submitted one is under review; what is changed
+ * is seen there); a merged one is part of the archive and cannot be changed.
  */
 export interface Session {
   id: string
@@ -317,15 +317,15 @@ export class Workspace {
     return this.shown.filter((o) => validityOf(o.text).state !== 'valid')
   }
 
-  /** Objects that are not saved to GitHub yet (frozen sessions do not count: they are not saved any more). */
+  /** Objects that are not saved to GitHub yet (those of merged sessions do not count: they are not saved any more). */
   get unsaved(): ObjectRecord[] {
-    const open = new Set(this.sessions.filter((s) => s.state === 'open').map((s) => s.id))
+    const open = new Set(this.sessions.filter((s) => s.state !== 'merged').map((s) => s.id))
     return this.objects.filter((o) => open.has(o.sessionId) && o.text !== o.synced)
   }
 
-  /** True if the object may be changed: it is in the shown session and that one is open. */
+  /** True if the object may be changed: it is in the shown session and that one is not merged yet. */
   writable(object: ObjectRecord): boolean {
-    return object.sessionId === this.currentId && this.current?.state === 'open'
+    return object.sessionId === this.currentId && this.current !== undefined && this.current.state !== 'merged'
   }
 
   /** The files of the Dateien pane: those of the shown session and the free ones. Files of other sessions are hidden. */
@@ -353,7 +353,7 @@ export class Workspace {
     const session = this.#sessionOf(object)
     const name = session ? `„${session.name}“` : 'einer anderen Erfassung'
     if (session && session.id === this.currentId) {
-      return `${refer(object)} gehört zur Erfassung ${name}, die schon ${session.state === 'merged' ? 'übernommen' : 'eingereicht'} ist. Ändern kannst du es dort nicht mehr.`
+      return `${refer(object)} gehört zur Erfassung ${name}, die schon übernommen ist. Ändern kannst du es dort nicht mehr.`
     }
     return `${refer(object)} gehört zur Erfassung ${name}. Wechsle dorthin, um es zu ändern.`
   }
@@ -479,10 +479,10 @@ export class Workspace {
     }
   }
 
-  /** The session new objects go into: the shown one if it is open, a new one if there is none. Undefined if the shown one is frozen. */
+  /** The session new objects go into: the shown one if it can take changes, a new one if there is none. Undefined if the shown one is merged. */
   #openSession(): Session | undefined {
     const current = this.current
-    if (current) return current.state === 'open' ? current : undefined
+    if (current) return current.state !== 'merged' ? current : undefined
     const open = this.sessions.find((s) => s.state === 'open')
     const session = open ?? this.#add(defaultName())
     this.currentId = session.id
@@ -1501,12 +1501,12 @@ export class Workspace {
   /** Where an object stands: it follows its session once it is saved. */
   standing(object: ObjectRecord): Standing {
     const session = this.#sessionOf(object)
-    if (session && session.state !== 'open') return session.state
+    if (session?.state === 'merged') return 'merged'
     if (this.savingObjects.includes(object.id)) return 'saving'
     if (session && this.failedSessions.includes(session.id) && object.text !== object.synced) return 'failed'
     if (object.synced === undefined) return 'local'
     if (object.text !== object.synced) return 'changed'
-    return 'saved'
+    return session?.state === 'submitted' ? 'submitted' : 'saved'
   }
 
   #typingPending = false
@@ -1569,7 +1569,7 @@ export class Workspace {
       return false
     }
     const work = this.sessions
-      .filter((s) => s.state === 'open')
+      .filter((s) => s.state !== 'merged')
       .map((session) => ({
         session,
         todo: this.objects.filter((o) => o.sessionId === session.id && o.text !== o.synced).map((object) => ({ object, text: object.text })),
@@ -1611,15 +1611,8 @@ export class Workspace {
           signedOut = true
           break
         }
-        if (error instanceof Locked) {
-          // Submitted from somewhere else (or before this browser knew): what was changed here is not taken any more.
-          session.state = 'submitted'
-          this.#dirtySessions.add(session.id)
-          this.#say('status', `Die Erfassung „${session.name}“ war leider schon eingereicht (vielleicht in einem anderen Browser oder Tab). Deine Änderungen konnten nicht mehr gesichert werden.`)
-        } else {
-          failure ??= error as Error
-          if (!this.failedSessions.includes(session.id)) this.failedSessions.push(session.id)
-        }
+        failure ??= error as Error
+        if (!this.failedSessions.includes(session.id)) this.failedSessions.push(session.id)
       } finally {
         // Even a quick save shows for a moment, so that it can be seen that something happened.
         const ids = todo.map(({ object }) => object.id)
@@ -1646,7 +1639,7 @@ export class Workspace {
       this.#syncAgain = false
       this.#syncAfterApp()
     }
-    return ok && this.unsaved.length === 0 && !this.sessions.some((s) => s.state === 'open' && s.deleted.length > 0)
+    return ok && this.unsaved.length === 0 && !this.sessions.some((s) => s.state !== 'merged' && s.deleted.length > 0)
   }
 
   /** Saves what is open, then submits the shown session. Tells the person in the chat what came of it. */
@@ -1680,13 +1673,7 @@ export class Workspace {
       this.#say('assistant', `Ich habe die Erfassung „${session.name}“ mit ${n === 1 ? 'einem Objekt' : `${n} Objekten`} eingereicht. Sie wird jetzt geprüft. Du kannst in einer anderen Erfassung weitermachen.`)
       this.#ensureOpen(true)
     } catch (error) {
-      if (error instanceof Locked) {
-        session.state = 'submitted'
-        this.#dirtySessions.add(session.id)
-        this.#schedule()
-      } else if (!(error instanceof SignedOut)) {
-        this.#say('status', `Das Einreichen ging nicht: ${(error as Error).message}`)
-      }
+      if (!(error instanceof SignedOut)) this.#say('status', `Das Einreichen ging nicht: ${(error as Error).message}`)
     } finally {
       this.submitting = false
     }
@@ -1698,7 +1685,16 @@ export class Workspace {
     for (const session of this.sessions.filter((s) => s.state === 'submitted' && s.pull)) {
       try {
         const pull = await this.#backend.pull(session.pull as number)
-        if (pull.state === 'open') continue
+        if (pull.state === 'open') {
+          if (pull.draft) {
+            // Given back by a reviewer: it is a draft again, the session goes on and can be submitted anew.
+            session.state = 'open'
+            this.#dirtySessions.add(session.id)
+            this.#schedule()
+            this.#say('status', `Die Erfassung „${session.name}“ wurde zurückgegeben. Du kannst sie überarbeiten und erneut einreichen.${session.url ? ' Anmerkungen stehen auf GitHub.' : ''}`)
+          }
+          continue
+        }
         const n = this.objects.filter((o) => o.sessionId === session.id).length
         if (pull.merged) {
           session.state = 'merged'

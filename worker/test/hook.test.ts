@@ -42,6 +42,53 @@ const hook = async (env: Env, body: string, headers: Record<string, string> = {}
     fakeGitHub().fn,
   )
 
+describe('the news about sessions', () => {
+  const env = (hub: ReturnType<typeof fakeHub>): Env => ({ ...authEnv, WEBHOOK_SECRET: SECRET, HUB: hub.namespace })
+  const send = (event: string, data: object) => hook(env(hubOf), JSON.stringify({ repository: { full_name: 'verein/archiv-data' }, ...data }), { 'x-github-event': event })
+  let hubOf: ReturnType<typeof fakeHub>
+  const told = () => hubOf.calls.map((c) => JSON.parse(c.body))
+
+  it('passes on a push to the branch of a session', async () => {
+    hubOf = fakeHub()
+    expect((await send('push', { ref: 'refs/heads/erfassung/anna/x', after: 'abc' })).status).toBe(204)
+    expect(told()).toEqual([{ type: 'pull' }])
+  })
+
+  it('passes on events of the pull request of a session, with its number', async () => {
+    hubOf = fakeHub()
+    await send('pull_request', { action: 'closed', number: 7, pull_request: { head: { ref: 'erfassung/anna/x' } } })
+    expect(told()).toEqual([{ type: 'pull', number: 7 }])
+  })
+
+  it('ignores the pull requests that are no session', async () => {
+    hubOf = fakeHub()
+    expect((await send('pull_request', { number: 7, pull_request: { head: { ref: 'feature/x' } } })).status).toBe(202)
+    expect(hubOf.calls).toEqual([])
+  })
+
+  it('passes on comments on a pull request (not on an issue)', async () => {
+    hubOf = fakeHub()
+    await send('issue_comment', { action: 'created', issue: { number: 7, pull_request: {} } })
+    await send('pull_request_review_comment', { action: 'created', pull_request: { number: 8 } })
+    expect((await send('issue_comment', { issue: { number: 9 } })).status).toBe(202)
+    expect(told()).toEqual([{ type: 'comment', number: 7 }, { type: 'comment', number: 8 }])
+  })
+
+  it('passes on how the checks of a session\'s branch stand', async () => {
+    hubOf = fakeHub()
+    await send('check_run', { action: 'completed', check_run: { check_suite: { head_branch: 'erfassung/anna/x' } } })
+    await send('status', { state: 'success', branches: [{ name: 'erfassung/anna/x' }] })
+    expect((await send('check_run', { check_run: { check_suite: { head_branch: 'feature/x' } } })).status).toBe(202)
+    expect(told()).toEqual([{ type: 'pull' }, { type: 'pull' }])
+  })
+
+  it('does not take a number that is none', async () => {
+    hubOf = fakeHub()
+    await send('pull_request', { number: '7; drop', pull_request: { head: { ref: 'erfassung/anna/x' } } })
+    expect(told()).toEqual([{ type: 'pull' }])
+  })
+})
+
 describe('POST /hook/github', () => {
   it('tells the hub when main moved', async () => {
     const hub = fakeHub()
@@ -66,7 +113,7 @@ describe('POST /hook/github', () => {
   it('ignores pushes to other branches and other repositories', async () => {
     const hub = fakeHub()
     const env = { ...authEnv, WEBHOOK_SECRET: SECRET, HUB: hub.namespace }
-    expect((await hook(env, push({ ref: 'refs/heads/erfassung/anna/x' }))).status).toBe(202)
+    expect((await hook(env, push({ ref: 'refs/heads/feature/x' }))).status).toBe(202)
     expect((await hook(env, push({ repository: { full_name: 'someone/else' } }))).status).toBe(202)
     expect((await hook(env, push(), { 'x-github-event': 'issues' })).status).toBe(202)
     expect(hub.calls).toEqual([])

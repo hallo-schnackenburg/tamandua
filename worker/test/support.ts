@@ -44,13 +44,17 @@ export interface Call {
 }
 
 /** A small pretend GitHub: enough of the sign-in and the git/pull request API to follow what the Worker does. */
-export function fakeGitHub(options: { permissions?: Record<string, boolean>; patchFailures?: number; emptyPull?: boolean; graphqlFails?: boolean } = {}) {
+export function fakeGitHub(options: { permissions?: Record<string, boolean>; patchFailures?: number; emptyPull?: boolean; graphqlFails?: boolean; mergeStatus?: number; checkRuns?: { status: string; conclusion: string | null }[]; checksStatus?: number } = {}) {
   const state = {
     refs: { main: 'c0' } as Record<string, string>,
     commits: { c0: { tree: 't0', parents: [] as string[], message: 'start' } } as Record<string, { tree: string; parents: string[]; message: string }>,
     trees: {} as Record<string, { base: string; entries: { path: string; content?: string; sha?: string | null }[]; paths: Set<string>; files: Map<string, string> }>,
     pulls: [] as { number: number; head: string; state: 'open' | 'closed'; merged: boolean; draft: boolean; title: string; body: string; createdAt?: string }[],
     calls: [] as Call[],
+    /** Comments on pull requests (of the pull request: `comments`; on a file of it: `reviewComments`). */
+    comments: [] as { id: number; number: number; body: string; login: string; createdAt: string; updatedAt: string }[],
+    reviewComments: [] as { id: number; number: number; body: string; login: string; path: string; createdAt: string }[],
+    merges: [] as { number: number; body: any }[],
     revoked: 0,
     patchFailures: options.patchFailures ?? 0,
     next: 1,
@@ -85,8 +89,8 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     if (url.pathname === '/graphql') {
       if (options.graphqlFails) return reply({ errors: [{ message: 'Resource not accessible' }] })
       const pull = state.pulls.find((p) => `PR_${p.number}` === body.variables.id)
-      if (pull) pull.draft = false
-      return reply({ data: { markPullRequestReadyForReview: { pullRequest: { number: pull?.number } } } })
+      if (pull) pull.draft = String(body.query).includes('convertPullRequestToDraft')
+      return reply({ data: { pullRequest: { number: pull?.number } } })
     }
 
     let m: RegExpExecArray | null
@@ -202,13 +206,53 @@ export function fakeGitHub(options: { permissions?: Record<string, boolean>; pat
     if ((m = /^\/pulls\/(\d+)$/.exec(path)) && method === 'PATCH') {
       const pull = state.pulls.find((p) => p.number === Number(m![1]))
       if (!pull) return reply({ message: 'Not Found' }, 404)
-      pull.title = body.title
-      pull.body = body.body
+      if (body.state) pull.state = body.state
+      if (body.title !== undefined) pull.title = body.title
+      if (body.body !== undefined) pull.body = body.body
       return reply({ number: pull.number })
     }
+    if ((m = /^\/pulls\/(\d+)\/merge$/.exec(path)) && method === 'PUT') {
+      const pull = state.pulls.find((p) => p.number === Number(m![1]))
+      if (!pull) return reply({ message: 'Not Found' }, 404)
+      if (options.mergeStatus) return reply({ message: 'Required status check is expected.' }, options.mergeStatus)
+      if (body.sha && body.sha !== state.refs[pull.head]) return reply({ message: 'Head branch was modified. Review and try the merge again.' }, 409)
+      state.merges.push({ number: pull.number, body })
+      pull.merged = true
+      pull.state = 'closed'
+      return reply({ merged: true })
+    }
+    const raw = (c: (typeof state.comments)[number]) => ({ id: c.id, body: c.body, created_at: c.createdAt, updated_at: c.updatedAt, user: { login: c.login, avatar_url: `https://avatars.example/${c.login}` }, issue_url: `https://api.github.com/repos/verein/archiv-data/issues/${c.number}` })
+    if ((m = /^\/issues\/(\d+)\/comments$/.exec(path)) && method === 'GET') return reply(state.comments.filter((c) => c.number === Number(m![1])).map(raw))
+    if ((m = /^\/issues\/(\d+)\/comments$/.exec(path)) && method === 'POST') {
+      const id = state.next++
+      const now = `2026-11-11T${String(10 + state.comments.length).padStart(2, '0')}:00:00Z`
+      state.comments.push({ id, number: Number(m[1]), body: body.body, login: 'anna', createdAt: now, updatedAt: now })
+      return reply(raw(state.comments[state.comments.length - 1]), 201)
+    }
+    if ((m = /^\/pulls\/(\d+)\/comments$/.exec(path)) && method === 'GET') {
+      return reply(state.reviewComments.filter((c) => c.number === Number(m![1])).map((c) => ({ id: c.id, body: c.body, created_at: c.createdAt, updated_at: c.createdAt, path: c.path, user: { login: c.login, avatar_url: `https://avatars.example/${c.login}` } })))
+    }
+    if ((m = /^\/issues\/comments\/(\d+)$/.exec(path))) {
+      const comment = state.comments.find((c) => c.id === Number(m![1]))
+      if (!comment) return reply({ message: 'Not Found' }, 404)
+      if (method === 'GET') return reply(raw(comment))
+      // Only the author may (the others are not allowed to by GitHub's rules, in this pretend).
+      if (comment.login !== 'anna') return reply({ message: 'Must have admin rights to Repository.' }, 403)
+      if (method === 'PATCH') {
+        comment.body = body.body
+        comment.updatedAt = '2026-11-12T10:00:00Z'
+        return reply(raw(comment))
+      }
+      if (method === 'DELETE') {
+        state.comments.splice(state.comments.indexOf(comment), 1)
+        return reply(null, 204)
+      }
+    }
+    if ((m = /^\/commits\/([^/]+)\/check-runs$/.exec(path))) return reply({ check_runs: options.checkRuns ?? [] })
+    if ((m = /^\/commits\/([^/]+)\/status$/.exec(path))) return options.checksStatus ? reply({ message: 'Resource not accessible by integration' }, options.checksStatus) : reply({ state: 'pending', total_count: 0 })
     if ((m = /^\/pulls\/(\d+)$/.exec(path))) {
       const pull = state.pulls.find((p) => p.number === Number(m![1]))
-      return pull ? reply({ number: pull.number, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}`, state: pull.state, merged: pull.merged, draft: pull.draft, head: { ref: pull.head, sha: state.refs[pull.head] } }) : reply({ message: 'Not Found' }, 404)
+      return pull ? reply({ number: pull.number, node_id: `PR_${pull.number}`, title: pull.title, mergeable: true, base: { ref: 'main' }, html_url: `https://github.com/verein/archiv-data/pull/${pull.number}`, state: pull.state, merged: pull.merged, draft: pull.draft, head: { ref: pull.head, sha: state.refs[pull.head] } }) : reply({ message: 'Not Found' }, 404)
     }
     return reply({ message: `unexpected ${method} ${input}` }, 500)
   })

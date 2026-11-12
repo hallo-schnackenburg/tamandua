@@ -1,6 +1,10 @@
-// The GitHub webhook of the data repository: GitHub calls it when something was pushed. A push to the base
-// branch (a merged pull request) is passed on to the hub, which tells every open browser that the archive
-// changed. Everything else is ignored. The call is signed with the webhook's secret (HMAC), which is the only
+// The GitHub webhook of the data repository: GitHub calls it when something happened. What is passed on to the hub,
+// which tells every open browser, is the news and not the data: the browsers then ask for what they need.
+//   push to the base branch (a merged pull request)       {type: 'push', ref, head}: the archive changed
+//   push to a session's branch, a pull request event      {type: 'pull', number?}: a session changed (new commit, submitted, accepted, closed ...)
+//   a comment on a pull request                           {type: 'comment', number}
+//   a check run or status on a session's branch           {type: 'pull'}: how the checks stand changed
+// Everything else is ignored. The call is signed with the webhook's secret (HMAC), which is the only
 // thing that proves it comes from GitHub.
 //
 //   POST /hook/github   (open to everyone, but only a correctly signed call does anything)
@@ -44,17 +48,45 @@ export async function handleHook(request: Request, route: string, env: HookEnv):
 
   const event = request.headers.get('x-github-event')
   if (event === 'ping') return reply(200, 'pong')
-  if (event !== 'push') return reply(202, 'Ignored.')
 
-  let push: { ref?: unknown; after?: unknown; repository?: { full_name?: unknown } }
+  let payload: {
+    ref?: unknown
+    after?: unknown
+    number?: unknown
+    repository?: { full_name?: unknown }
+    pull_request?: { head?: { ref?: unknown } }
+    issue?: { number?: unknown; pull_request?: unknown }
+    check_suite?: { head_branch?: unknown }
+    check_run?: { check_suite?: { head_branch?: unknown } }
+    branches?: { name?: unknown }[]
+  }
   try {
-    push = JSON.parse(body)
+    payload = JSON.parse(body)
   } catch {
     return reply(400, 'Not JSON.')
   }
-  const ref = `refs/heads/${env.BASE_BRANCH ?? 'main'}`
-  if (push.repository?.full_name !== env.DATA_REPO || push.ref !== ref || typeof push.after !== 'string') return reply(202, 'Ignored.')
+  if (payload.repository?.full_name !== env.DATA_REPO) return reply(202, 'Ignored.')
 
-  await hubOf(env.HUB).fetch(new Request('http://hub/notify', { method: 'POST', body: JSON.stringify({ type: 'push', ref: push.ref, head: push.after }) }))
+  const number = (value: unknown): number | undefined => (typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined)
+  let news: object | undefined
+  if (event === 'push' && typeof payload.ref === 'string') {
+    if (payload.ref === `refs/heads/${env.BASE_BRANCH ?? 'main'}` && typeof payload.after === 'string') news = { type: 'push', ref: payload.ref, head: payload.after }
+    else if (payload.ref.startsWith('refs/heads/erfassung/')) news = { type: 'pull' }
+  } else if (event === 'pull_request') {
+    const ref = payload.pull_request?.head?.ref
+    if (typeof ref === 'string' && ref.startsWith('erfassung/')) news = { type: 'pull', number: number(payload.number) }
+  } else if (event === 'issue_comment') {
+    if (payload.issue?.pull_request) news = { type: 'comment', number: number(payload.issue.number) }
+  } else if (event === 'check_run' || event === 'check_suite') {
+    const branch = event === 'check_run' ? payload.check_run?.check_suite?.head_branch : payload.check_suite?.head_branch
+    if (typeof branch === 'string' && branch.startsWith('erfassung/')) news = { type: 'pull' }
+  } else if (event === 'status') {
+    if (Array.isArray(payload.branches) && payload.branches.some((b) => typeof b?.name === 'string' && b.name.startsWith('erfassung/'))) news = { type: 'pull' }
+  } else if (event === 'pull_request_review_comment') {
+    news = { type: 'comment', number: number((payload as { pull_request?: { number?: unknown } }).pull_request?.number) }
+  }
+  if (!news) return reply(202, 'Ignored.')
+
+  await hubOf(env.HUB).fetch(new Request('http://hub/notify', { method: 'POST', body: JSON.stringify(news) }))
   return reply(204, '')
 }

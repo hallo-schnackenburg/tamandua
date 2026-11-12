@@ -36,6 +36,40 @@ export interface RemoteErfassung {
   name: string
   createdAt: string
   head: string
+  /** How the checks stand, for a session waiting for review. */
+  checks?: Checks
+}
+
+/** How the automatic checks (the validation of the data) of a session stand. */
+export type Checks = 'none' | 'pending' | 'failure' | 'success' | 'unknown'
+
+/** A session as it is looked at for review: what it changes, and whether it can be accepted. */
+export interface Review {
+  head: string
+  /** The address of the bucket's files, if the Worker knows it. */
+  files?: string
+  pull: Pull
+  /** Whether GitHub can merge it; null while it does not know. */
+  mergeable: boolean | null
+  checks: Checks
+  /** What the session does with each object; the text is the one of the session (none for a removed object). */
+  objects: { id: string; status: 'added' | 'modified' | 'removed'; text?: string }[]
+}
+
+/** A comment on a session. */
+export interface Comment {
+  id: number
+  /** `issue`: written in the app or on the pull request (can be changed here); `review`: on a file of the pull request, written on GitHub. */
+  kind: 'issue' | 'review'
+  login: string
+  avatar: string
+  text: string
+  createdAt: string
+  /** It was changed after it was written. */
+  edited: boolean
+  /** The object a comment on a file line (kind 'review') belongs to. */
+  object?: string
+  field?: string
 }
 
 /** What a session holds on GitHub: its objects (YAML text) and where to read the files' previews from. */
@@ -65,19 +99,12 @@ export interface Removed {
   title?: string
 }
 
-/** The pull request of the session is no longer a draft: it was submitted, nothing may be added to it. */
-export class Locked extends Error {
-  constructor() {
-    super('Diese Erfassung ist schon eingereicht.')
-  }
-}
-
 export interface Backend {
   /** The signed-in person, or undefined if nobody is. Throws if the server cannot be asked. */
   me(): Promise<User | undefined>
   /**
    * Puts the objects (id and YAML text) into one commit on the session's branch and removes the deleted
-   * ones from it. Returns the pull request of the session, if there is one. Throws `Locked` if it was submitted.
+   * ones from it. Returns the pull request of the session, if there is one.
    */
   save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<Pull | undefined>
   /** Marks the pull request of the session as ready for review. */
@@ -89,6 +116,19 @@ export interface Backend {
   erfassungen(): Promise<RemoteErfassung[]>
   /** The objects of one session, with their text. */
   erfassung(number: number): Promise<RemoteContent>
+  /** A session as it is looked at for review. */
+  review(number: number): Promise<Review>
+  /** Accepts a submitted session (`head`: the commit that was looked at; if it changed since, this fails). */
+  merge(number: number, head: string): Promise<Pull>
+  /** Closes a submitted session without accepting it. */
+  reject(number: number): Promise<Pull>
+  /** The comments on a session, oldest first. */
+  comments(number: number): Promise<Comment[]>
+  /** Writes a comment on the session. */
+  addComment(number: number, text: string): Promise<Comment>
+  /** Changes the text of a comment (the person's own). */
+  editComment(id: number, text: string): Promise<Comment>
+  deleteComment(id: number): Promise<void>
   /** What the copy of the archive needs from the repository (see archive-mirror.ts). */
   readonly archive: MirrorBackend
   /** A file from the bucket (a preview), or undefined if it cannot be had. */
@@ -146,8 +186,7 @@ export class HttpBackend implements Backend {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ session, objects: objects.slice(o, o + MAX_PER_SAVE), deleted: deleted.slice(d, d + MAX_PER_SAVE) }),
       })
-      const data = await jsonOf<{ pull?: Pull; locked?: boolean }>(response)
-      if (response.status === 409 && data.locked) throw new Locked()
+      const data = await jsonOf<{ pull?: Pull }>(response)
       if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
       pull = data.pull ?? pull
     }
@@ -194,6 +233,63 @@ export class HttpBackend implements Backend {
     const data = await jsonOf<{ head: string; raw: string; files?: string; objects: { id: string; path: string; status: string }[] }>(response)
     if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
     return { head: data.head, files: data.files, objects: await readTexts(data.raw, data.objects.filter((o) => o.status !== 'removed')) }
+  }
+
+  async review(number: number): Promise<Review> {
+    const response = await request(`${this.#url}/repo/erfassung/${number}`)
+    const data = await jsonOf<Omit<Review, 'objects'> & { raw: string; objects: { id: string; path: string; status: Review['objects'][number]['status'] }[] }>(response)
+    if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+    const texts = new Map((await readTexts(data.raw, data.objects.filter((o) => o.status !== 'removed'))).map((o) => [o.id, o.text]))
+    return {
+      head: data.head,
+      files: data.files,
+      pull: data.pull,
+      mergeable: data.mergeable,
+      checks: data.checks,
+      objects: data.objects.map((o) => ({ id: o.id, status: o.status, text: texts.get(o.id) })),
+    }
+  }
+
+  async #act(what: 'merge' | 'close', body: object): Promise<Pull> {
+    const response = await request(`${this.#url}/repo/${what}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const data = await jsonOf<Pull>(response)
+    if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+    return data
+  }
+
+  merge(number: number, head: string): Promise<Pull> {
+    return this.#act('merge', { number, head })
+  }
+
+  reject(number: number): Promise<Pull> {
+    return this.#act('close', { number })
+  }
+
+  async comments(number: number): Promise<Comment[]> {
+    const response = await request(`${this.#url}/repo/erfassung/${number}/comments`)
+    const data = await jsonOf<{ comments: Comment[] }>(response)
+    if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+    return data.comments
+  }
+
+  async #comment(method: string, path: string, body?: object): Promise<Comment> {
+    const response = await request(`${this.#url}${path}`, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) })
+    const data = await jsonOf<{ comment: Comment }>(response)
+    if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+    return data.comment
+  }
+
+  addComment(number: number, text: string): Promise<Comment> {
+    return this.#comment('POST', `/repo/erfassung/${number}/comments`, { text })
+  }
+
+  editComment(id: number, text: string): Promise<Comment> {
+    return this.#comment('PATCH', `/repo/comment/${id}`, { text })
+  }
+
+  async deleteComment(id: number): Promise<void> {
+    const response = await request(`${this.#url}/repo/comment/${id}`, { method: 'DELETE' })
+    if (!response.ok) throw new Error((await jsonOf<object>(response)).error ?? `Fehler ${response.status}`)
   }
 
   readonly archive: MirrorBackend = {
@@ -266,7 +362,6 @@ export class FakeBackend implements Backend {
 
   async save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<Pull | undefined> {
     await sleep(150)
-    if (this.submitted.has(session.slug) && !this.closed) throw new Locked()
     if (objects.some((o) => /failsave/.test(o.text))) throw new Error('Speichern fehlgeschlagen (Test).')
     if (this.closed) {
       this.submitted.delete(session.slug)
@@ -312,6 +407,51 @@ export class FakeBackend implements Backend {
     const slug = [...this.branches.keys()].find((s) => this.#pullOf(s).number === number)
     const branch = slug ? this.branches.get(slug) : undefined
     return { head: 'fake', objects: [...(branch ?? [])].map(([id, text]) => ({ id, text })).sort((a, b) => a.id.localeCompare(b.id)) }
+  }
+
+  async review(number: number): Promise<Review> {
+    const content = await this.erfassung(number)
+    const slug = [...this.branches.keys()].find((s) => this.#pullOf(s).number === number)
+    return {
+      head: content.head,
+      pull: { ...this.#pullOf(slug ?? ''), merged: this.merged, state: this.merged || this.closed ? 'closed' : 'open' },
+      mergeable: true,
+      checks: 'none',
+      objects: content.objects.map((o) => ({ id: o.id, status: 'added' as const, text: o.text })),
+    }
+  }
+
+  async merge(number: number): Promise<Pull> {
+    this.merged = true
+    return this.pull(number)
+  }
+
+  async reject(number: number): Promise<Pull> {
+    this.closed = true
+    return this.pull(number)
+  }
+
+  #comments: Comment[] = []
+
+  async comments(): Promise<Comment[]> {
+    return [...this.#comments]
+  }
+
+  async addComment(_number: number, text: string): Promise<Comment> {
+    const comment: Comment = { id: this.#comments.length + 1, kind: 'issue', login: 'test', avatar: '', text, createdAt: new Date().toISOString(), edited: false }
+    this.#comments.push(comment)
+    return comment
+  }
+
+  async editComment(id: number, text: string): Promise<Comment> {
+    const comment = this.#comments.find((c) => c.id === id)
+    if (!comment) throw new Error('Kommentar nicht gefunden.')
+    Object.assign(comment, { text, edited: true })
+    return comment
+  }
+
+  async deleteComment(id: number): Promise<void> {
+    this.#comments = this.#comments.filter((c) => c.id !== id)
   }
 
   /** Without a Worker the archive is empty. */

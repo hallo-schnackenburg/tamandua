@@ -5,7 +5,7 @@
 import { checkParents, readObject } from '@tamandua/core'
 import { Mirror, type Derive, type MirrorBackend, type MirrorRecord, type Progress } from './archive-mirror.js'
 import { loadArchive, saveArchive } from './db.js'
-import { Live } from './live.js'
+import { Live, type News } from './live.js'
 import { buildTree } from './group-tree.js'
 import { placeOf } from './labels.js'
 import { NO_GROUP } from './route.js'
@@ -95,6 +95,7 @@ export class ArchiveDb {
   #lastVerified = 0
   #lastSync = 0
   #started = false
+  #listeners = new Set<(news?: News) => void>()
   #channel: Live | undefined
   #giveUp: ReturnType<typeof setTimeout> | undefined
 
@@ -102,7 +103,7 @@ export class ArchiveDb {
   constructor(backend: MirrorBackend, liveAddress?: string) {
     if (liveAddress) {
       this.liveState = 'connecting'
-      this.#channel = new Live(liveAddress, () => void this.refresh(), (open) => this.#liveChanged(open))
+      this.#channel = new Live(liveAddress, (news) => this.#news(news), (open) => this.#liveChanged(open))
     }
     this.#mirror = new Mirror(
       {
@@ -220,6 +221,18 @@ export class ArchiveDb {
 
   #offline = () => {
     if (this.#channel) this.liveState = 'lost'
+  }
+
+  /** Calls `listener` for the news that is not about the archive (a session changed, a comment) and when the connection has opened. Returns the way to stop. */
+  subscribe(listener: (news?: News) => void): () => void {
+    this.#listeners.add(listener)
+    return () => this.#listeners.delete(listener)
+  }
+
+  #news(news?: News): void {
+    // Without news (the connection just opened) and for a push to main the archive is read again; news about sessions is for the others.
+    if (!news || news.type === 'push' || news.type === undefined) void this.refresh()
+    if (!news || news.type !== 'push') for (const listener of this.#listeners) listener(news)
   }
 
   #liveChanged(open: boolean): void {

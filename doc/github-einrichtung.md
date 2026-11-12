@@ -78,10 +78,10 @@ Im Daten-Repo unter Settings → Webhooks → Add webhook:
   (siehe unten) plus `/hook/github`
 - Content type: `application/json`
 - Secret: der Wert von `WEBHOOK_SECRET`
-- Events: "Just the push event"
+- Events: "Let me select individual events": Pushes, Pull requests, Issue comments, Pull request review comments, Check runs und Statuses (die letzten beiden nur, damit "Geprüft" sofort erscheint, sonst nach spätestens einer Minute)
 
 GitHub schickt gleich einen Ping; unter "Recent Deliveries" muss dort ein grünes Häkchen stehen. Der Worker beachtet nur
-Pushes auf `main` des eigenen Daten-Repos und prüft bei jedem Aufruf die Signatur.
+Änderungen des eigenen Daten-Repos (Pushes, Erfassungen, Kommentare, Prüfungen) und prüft bei jedem Aufruf die Signatur.
 
 Der Hub wird beim ersten Deploy angelegt (`[[migrations]]` in `wrangler.toml`; auf dem Free-Plan nur mit SQLite-Speicher,
 den wir nutzen). Er schläft, solange nichts gesendet wird, und kostet dann nichts.

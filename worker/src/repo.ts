@@ -2,9 +2,12 @@
 //
 //   POST /repo/save        {session, objects?, deleted?}  one commit on the session's branch (objects written,
 //                          deleted ones removed); the first one also opens the pull request as a draft.
-//                          Refused once the pull request is ready for review: it is frozen then.
+//                          A pull request that was submitted can still be changed: the review sees what is there.
 //   POST /repo/submit      {session}  asks for a review: marks the draft ready (or opens the pull request)
 //   POST /repo/rename      {session}  gives the open pull request the session's new name
+//   POST /repo/merge       {number, head?}  accepts a submitted session: its pull request is merged (squashed); `head` is the commit
+//                          that was looked at, and if the session changed since, nothing happens (409)
+//   POST /repo/close       {number}   closes a submitted session without merging it (what is to be said goes into a comment)
 //   GET  /repo/pull/<n>    state of a pull request: open, closed, merged
 //   GET  /repo/erfassungen the sessions of everybody: the pull requests whose branch is erfassung/<login>/<slug>
 //   GET  /repo/objects     the objects of the archive (main): id, path and hash of each, and where to read their text (like below)
@@ -12,9 +15,14 @@
 //                          data repository's CI): {url}. The browser reads it for its first copy, and asks for the rest as usual.
 //   GET  /repo/changes?since=<commit>  what changed on main since that commit: objects added, modified, removed (or
 //                          {reload: true} if that cannot be told: then everything is read again)
+//   GET  /repo/erfassung/<n>/comments   the comments on a session, oldest first: written in the app (they say which object and field
+//                          they are about) or on GitHub (a comment on a file in the pull request is about that object)
+//   POST /repo/erfassung/<n>/comments   {text, object?, field?}  writes a comment
+//   PATCH /repo/comment/<id>  {text}  changes a comment; DELETE /repo/comment/<id> removes it (only the author may, GitHub sees to it)
 //   GET  /repo/erfassung/<n>  one session's objects (path and what happened to it) and where to read their text:
 //                          the browser reads it itself, from raw.githubusercontent.com at the head commit; `files` is the
-//                          address of the bucket for the previews
+//                          address of the bucket for the previews; `pull` is its pull request, `checks` how the checks stand,
+//                          `mergeable` whether GitHub can merge it (null: not known yet)
 //
 // The app checks every object against the schema before it sends it. The Worker cannot (the schema
 // checker generates code, which Workers do not allow); it only checks that the objects are what they
@@ -22,7 +30,7 @@
 
 import { objectPath, parseObjectId } from '@tamandua/core/paths'
 import { SNAPSHOT_BRANCH, SNAPSHOT_FILE } from '@tamandua/core/snapshot'
-import { GitHubError, Repo, type ChangedFile, type GithubEnv, type ListedPull } from './github.js'
+import { GitHubError, Repo, type Checks, type ChangedFile, type GithubEnv, type ListedPull, type RawComment } from './github.js'
 import { objectUrl } from './s3.js'
 import { s3Config, type UploadEnv } from './upload.js'
 import type { Auth } from './session.js'
@@ -165,6 +173,8 @@ export interface Erfassung {
   createdAt: string
   /** The commit the pull request is at now. */
   head: string
+  /** How the checks of a submitted session stand (only given for those waiting for review). */
+  checks?: Checks
 }
 
 const MARKER = /<!-- tamandua-session: (\{.*?\}) -->/s
@@ -208,6 +218,11 @@ export function erfassungenOf(pulls: ListedPull[]): Erfassung[] {
 }
 
 /** An object of a session: where its YAML is in the repository, and what the pull request does with it. */
+/** The sessions waiting for review, with how their checks stand (a few calls at most: only those are asked). */
+async function withChecks(repo: Repo, list: Erfassung[]): Promise<Erfassung[]> {
+  return Promise.all(list.map(async (e) => (e.state === 'submitted' && !e.closed ? { ...e, checks: await repo.checks(e.head) } : e)))
+}
+
 export interface ErfassungObject {
   id: string
   path: string
@@ -261,6 +276,79 @@ export function archiveChangesOf(files: ChangedFile[]): ArchiveChange[] {
   return changes
 }
 
+/** A comment of a session as the app shows it. */
+export interface Comment {
+  id: number
+  /** `issue`: on the pull request (can be changed here); `review`: on a file of it, written on GitHub (can only be read here). */
+  kind: 'issue' | 'review'
+  login: string
+  avatar: string
+  text: string
+  createdAt: string
+  edited: boolean
+  /** The object (and its field) the comment is about, if it says so. */
+  object?: string
+  field?: string
+}
+
+const COMMENT_MARKER = /\n*<!-- tamandua-comment: (\{[^\n]*?\}) -->\s*$/
+const FIELD = /^[a-z][a-z_]{0,39}$/
+
+/** A comment's text with what the app put at its end ("this is about that object") taken off. */
+export function splitComment(body: string): { text: string; object?: string; field?: string } {
+  const match = COMMENT_MARKER.exec(body)
+  if (!match) return { text: body.trim() }
+  const text = body.slice(0, match.index).trim()
+  try {
+    const data = JSON.parse(match[1]) as { object?: unknown; field?: unknown }
+    const object = typeof data.object === 'string' ? parseObjectId(data.object) : null
+    if (!object) return { text }
+    return { text, object, field: typeof data.field === 'string' && FIELD.test(data.field) ? data.field : undefined }
+  } catch {
+    return { text }
+  }
+}
+
+/** The text of a comment as it is written to GitHub: with the note about the object at its end, so that a person reading it there sees only the text. */
+export function joinComment(text: string, object?: string, field?: string): string {
+  if (!object) return text
+  return `${text}\n\n<!-- tamandua-comment: ${JSON.stringify({ object, ...(field ? { field } : {}) })} -->`
+}
+
+const MAX_COMMENT = 5000
+
+/** The text of a request for a comment: 1 to 5000 characters, without control characters; or a failure to report. */
+export function parseCommentText(data: unknown): string | Failure {
+  const text = (data as { text?: unknown } | null)?.text
+  if (typeof text !== 'string') return { error: '"text" must be text.', status: 400 }
+  const clean = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').replace(/<!--/g, '<!- -').trim()
+  if (clean.length === 0 || clean.length > MAX_COMMENT) return { error: `A comment needs 1 to ${MAX_COMMENT} characters.`, status: 400 }
+  return clean
+}
+
+/** The comments of a session in one list, oldest first. */
+export function commentsOf(raw: { issue: RawComment[]; review: RawComment[] }): Comment[] {
+  const comments: Comment[] = []
+  for (const kind of ['issue', 'review'] as const) {
+    for (const c of raw[kind]) {
+      const { text, object, field } = splitComment(c.body ?? '')
+      const onFile = kind === 'review' ? OBJECT_FILE.exec(c.path ?? '')?.[1] : undefined
+      comments.push({
+        id: c.id,
+        kind,
+        login: c.user?.login ?? 'unbekannt',
+        avatar: c.user?.avatar_url ?? '',
+        text,
+        createdAt: c.created_at,
+        edited: c.updated_at !== c.created_at,
+        object: object ?? onFile,
+        field,
+      })
+    }
+  }
+  return comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id - b.id)
+}
+
 /** A commit as it is written into the address: letters and digits only (GitHub knows what is a commit). */
 const COMMIT = /^[0-9A-Za-z]{1,64}$/
 
@@ -289,9 +377,8 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
       const { session, files, removals, notes, removedLabels } = parsed
       const branch = branchOf(user.login, session.slug)
 
-      // A pull request that is ready for review is frozen: the reviewer reads a fixed state.
+      // A submitted session can still be changed (also while it is being reviewed): its pull request is the same.
       const existing = await repo.current(branch)
-      if (existing && !existing.draft) return json({ error: 'The session was submitted and cannot be changed.', locked: true }, 409)
 
       const commit = await repo.save(branch, files, removals, (removed) =>
         messageOf(session.name, [...notes, ...removed.map((path): Note => ({ mark: '-', label: removedLabels[path] }))]),
@@ -319,10 +406,48 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
       return json({ pull: (await repo.rename(branch, title, bodyOf(user.login, session))) ?? null })
     }
 
+    if ((route === '/repo/merge' || route === '/repo/close') && request.method === 'POST') {
+      const data = await body()
+      if (data instanceof Response) return data
+      const { number, head } = (data ?? {}) as { number?: unknown; head?: unknown }
+      if (typeof number !== 'number' || !Number.isInteger(number) || number < 1 || number > 999_999_999) return json({ error: '"number" must be the number of a pull request.' }, 400)
+      if (head !== undefined && (typeof head !== 'string' || !COMMIT.test(head))) return json({ error: '"head" must be a commit.' }, 400)
+      return json(route === '/repo/merge' ? await repo.merge(number, head) : await repo.reject(number))
+    }
+
+    const talk = /^\/repo\/erfassung\/(\d{1,9})\/comments$/.exec(route)
+    if (talk && request.method === 'GET') return json({ comments: commentsOf(await repo.comments(Number(talk[1]))) })
+    if (talk && request.method === 'POST') {
+      const data = await body()
+      if (data instanceof Response) return data
+      const text = parseCommentText(data)
+      if (typeof text !== 'string') return json({ error: text.error }, text.status)
+      const { object, field } = (data ?? {}) as { object?: unknown; field?: unknown }
+      if (object !== undefined && (typeof object !== 'string' || !parseObjectId(object))) return json({ error: '"object" must be an object id (ULID).' }, 400)
+      if (field !== undefined && (typeof field !== 'string' || !FIELD.test(field))) return json({ error: '"field" must be the name of a field.' }, 400)
+      const made = await repo.addComment(Number(talk[1]), joinComment(text, object as string | undefined, field as string | undefined))
+      return json({ comment: commentsOf({ issue: [made], review: [] })[0] }, 201)
+    }
+    const one_comment = /^\/repo\/comment\/(\d{1,12})$/.exec(route)
+    if (one_comment && request.method === 'PATCH') {
+      const data = await body()
+      if (data instanceof Response) return data
+      const text = parseCommentText(data)
+      if (typeof text !== 'string') return json({ error: text.error }, text.status)
+      // What the comment is about stays: it is read from the comment itself.
+      const before = splitComment((await repo.issueComment(Number(one_comment[1]))).body ?? '')
+      const changed = await repo.editComment(Number(one_comment[1]), joinComment(text, before.object, before.field))
+      return json({ comment: commentsOf({ issue: [changed], review: [] })[0] })
+    }
+    if (one_comment && request.method === 'DELETE') {
+      await repo.deleteComment(Number(one_comment[1]))
+      return json({ deleted: true })
+    }
+
     const match = /^\/repo\/pull\/(\d{1,9})$/.exec(route)
     if (match && request.method === 'GET') return json(await repo.pull(Number(match[1])))
 
-    if (route === '/repo/erfassungen' && request.method === 'GET') return json({ erfassungen: erfassungenOf(await repo.pulls()) })
+    if (route === '/repo/erfassungen' && request.method === 'GET') return json({ erfassungen: await withChecks(repo, erfassungenOf(await repo.pulls())) })
 
     if (route === '/repo/objects' && request.method === 'GET') {
       const { head, files } = await repo.tree()
@@ -343,7 +468,7 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
 
     const one = /^\/repo\/erfassung\/(\d{1,9})$/.exec(route)
     if (one && request.method === 'GET') {
-      const { head, files } = await repo.pullFiles(Number(one[1]))
+      const { head, pull, files } = await repo.pullFiles(Number(one[1]))
       // `files` is where the bucket's files can be read from (it is public): the browser fetches the previews itself.
       const storage = s3Config(env)
       return json({
@@ -351,6 +476,9 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
         raw: `https://raw.githubusercontent.com/${env.DATA_REPO}/${head}`,
         files: storage ? objectUrl(storage, '').origin : undefined,
         objects: objectsOf(files),
+        pull: { number: pull.number, url: pull.html_url, state: pull.state, merged: pull.merged, draft: pull.draft === true },
+        mergeable: pull.mergeable,
+        checks: await repo.checks(head),
       })
     }
   } catch (error) {
@@ -358,7 +486,9 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
       console.error('GitHub error', error.status, error.message)
       // Without a token that works any more the app has to sign in again; everything else is passed on as a message.
       if (error.status === 401) return json({ error: 'Not signed in.' }, 401)
-      if (error.status === 409 && route === '/repo/submit') return json({ error: error.message }, 409)
+      if (error.status === 409 && ['/repo/submit', '/repo/merge', '/repo/close'].includes(route)) return json({ error: error.message }, 409)
+      if (error.status === 404 && (error.message === 'Das ist keine Erfassung.' || error.message === 'Das ist kein Kommentar zu einer Erfassung.')) return json({ error: error.message }, 404)
+      if (error.status === 403 && route.startsWith('/repo/comment/')) return json({ error: 'Das darf nur, wer den Kommentar geschrieben hat.' }, 403)
       return json({ error: `GitHub answered with an error (${error.status}): ${error.message}`.slice(0, 300) }, 502)
     }
     throw error

@@ -13,12 +13,13 @@ const CHAT = 'chat' // one record, {id: 'log', messages: [...]}
 const SESSIONS = 'sessions'
 const ARCHIVE = 'archive' // the copy of the archive: one record per object file, key: its path in the repository
 const META = 'meta' // what the user was looking at, one record {id: 'ui', ...}
+const REVIEW = 'review' // what the review last saw: the list of sessions, each session with its comments; one record each, key: 'list', 'detail:<n>', 'comments:<n>'
 
 let opened: Promise<IDBDatabase> | undefined
 
 function database(): Promise<IDBDatabase> {
   opened ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 6)
+    const request = indexedDB.open(DB_NAME, 7)
     request.onupgradeneeded = () => {
       const db = request.result
       if (db.objectStoreNames.contains('drafts')) db.deleteObjectStore('drafts') // version 1, dropped
@@ -28,6 +29,7 @@ function database(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(SESSIONS)) db.createObjectStore(SESSIONS, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(ARCHIVE)) db.createObjectStore(ARCHIVE, { keyPath: 'path' })
+      if (!db.objectStoreNames.contains(REVIEW)) db.createObjectStore(REVIEW, { keyPath: 'id' })
     }
     request.onsuccess = () => {
       const db = request.result
@@ -142,6 +144,18 @@ export async function saveArchive(synced: string | undefined, put: MirrorRecord[
   for (const path of remove) store.delete(path)
   for (const record of put) store.put({ ...record })
   if (synced) transaction.objectStore(META).put({ id: 'archive', synced })
+  await done(transaction)
+}
+
+/** What the review kept: the sessions of the team, and for each the objects it changes and its comments. */
+export const loadReview = () => readAll<{ id: string; value: unknown }>(REVIEW)
+
+export async function saveReview(put: { id: string; value: unknown }[], remove: string[]): Promise<void> {
+  const db = await database()
+  const transaction = db.transaction(REVIEW, 'readwrite')
+  const store = transaction.objectStore(REVIEW)
+  for (const id of remove) store.delete(id)
+  for (const record of put) store.put(record)
   await done(transaction)
 }
 

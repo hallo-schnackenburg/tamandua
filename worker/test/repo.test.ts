@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { objectPath } from '@tamandua/core/paths'
 import { handle, type Env } from '../src/index.js'
-import { bodyOf, branchOf, erfassungenOf, markerOf, messageOf, parseSessionRef, titleOf } from '../src/repo.js'
+import { bodyOf, branchOf, commentsOf, erfassungenOf, joinComment, markerOf, messageOf, parseSessionRef, splitComment, titleOf } from '../src/repo.js'
 import { authEnv, blobSha, cookieOf, fakeGitHub } from './support.js'
 
 const env: Env = { ...authEnv }
@@ -219,7 +219,7 @@ describe('the pull request as a draft', () => {
   })
 })
 
-describe('a submitted session is frozen', () => {
+describe('a submitted session', () => {
   it('marks the draft ready for review', async () => {
     const gh = fakeGitHub()
     const saved = (await (await saveOf(gh, objects(ID_A))).json()) as { pull: { number: number } }
@@ -231,16 +231,17 @@ describe('a submitted session is frozen', () => {
     expect(again.draft).toBe(false)
   })
 
-  it('refuses further saves, without a commit', async () => {
+  it('can still be changed: the commit goes onto the branch and the pull request stays ready for review', async () => {
     const gh = fakeGitHub()
     await saveOf(gh, objects(ID_A))
     await handle(post('/repo/submit', { session }), env, gh.fn)
     const head = gh.state.refs[BRANCH]
     const response = await saveOf(gh, objects(ID_B))
-    expect(response.status).toBe(409)
-    expect(((await response.json()) as { locked: boolean }).locked).toBe(true)
-    expect((await saveOf(gh, { session, deleted: [ID_A] })).status).toBe(409)
-    expect(gh.state.refs[BRANCH]).toBe(head)
+    expect(response.status).toBe(200)
+    expect(gh.state.refs[BRANCH]).not.toBe(head)
+    expect(gh.state.pulls).toHaveLength(1)
+    expect(gh.state.pulls[0].draft).toBe(false)
+    expect((await saveOf(gh, { session, deleted: [ID_A] })).status).toBe(200)
   })
 
   it('takes saves again once the pull request is closed without merging (a new draft is opened)', async () => {
@@ -367,6 +368,9 @@ describe('GET /repo/erfassungen and /repo/erfassung/<n>', () => {
         { id: ID_A, path: objectPath(ID_A), status: 'added' },
         { id: ID_B, path: objectPath(ID_B), status: 'added' },
       ],
+      pull: { number: saved.pull.number, url: `https://github.com/verein/archiv-data/pull/${saved.pull.number}`, state: 'open', merged: false, draft: true },
+      mergeable: true,
+      checks: 'none',
     })
   })
 
@@ -482,5 +486,214 @@ describe('GET /repo/changes', () => {
     const gh = fakeGitHub()
     expect((await changes(gh, '..%2F..')).status).toBe(400)
     expect((await handle(new Request('http://worker/api/repo/changes?since=c0'), env, gh.fn)).status).toBe(401)
+  })
+})
+
+describe('reviewing a submitted session', () => {
+  const submitted = async (options: Parameters<typeof fakeGitHub>[0] = {}) => {
+    const gh = fakeGitHub(options)
+    const saved = (await (await saveOf(gh, objects(ID_A))).json()) as { pull: { number: number }; commit: string }
+    await handle(post('/repo/submit', { session }), env, gh.fn)
+    return { gh, number: saved.pull.number, head: saved.commit }
+  }
+  const act = (gh: ReturnType<typeof fakeGitHub>, what: string, data: unknown) => handle(post(`/repo/${what}`, data), env, gh.fn)
+
+  it('merges it (squashed) when it is ready, also one of somebody else\'s', async () => {
+    const { gh, number, head } = await submitted()
+    const response = await act(gh, 'merge', { number, head })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ number, state: 'closed', merged: true })
+    expect(gh.state.merges).toEqual([{ number, body: { merge_method: 'squash', sha: head } }])
+  })
+
+  it('does not merge what changed since it was looked at', async () => {
+    const { gh, number, head } = await submitted()
+    await saveOf(gh, objects(ID_B)) // the owner went on
+    const response = await act(gh, 'merge', { number, head })
+    expect(response.status).toBe(409)
+    expect(gh.state.pulls[0].merged).toBe(false)
+  })
+
+  it('says why GitHub does not merge it (checks, conflicts)', async () => {
+    const { gh, number } = await submitted({ mergeStatus: 405 })
+    const response = await act(gh, 'merge', { number })
+    expect(response.status).toBe(409)
+    expect(((await response.json()) as { error: string }).error).toContain('status check')
+  })
+
+  it('does not merge a draft, or one that is closed', async () => {
+    const gh = fakeGitHub()
+    const saved = (await (await saveOf(gh, objects(ID_A))).json()) as { pull: { number: number } }
+    expect((await act(gh, 'merge', { number: saved.pull.number })).status).toBe(409)
+    await handle(post('/repo/submit', { session }), env, gh.fn)
+    gh.state.pulls[0].state = 'closed'
+    expect((await act(gh, 'merge', { number: saved.pull.number })).status).toBe(409)
+    expect(gh.state.merges).toEqual([])
+  })
+
+  it('only handles sessions: no other pull request', async () => {
+    const gh = fakeGitHub()
+    gh.state.refs['feature/something'] = 'c0'
+    gh.state.pulls.push({ number: 91, head: 'feature/something', state: 'open', merged: false, draft: false, title: 'Not a session', body: '' })
+    for (const what of ['merge', 'close']) expect((await act(gh, what, { number: 91 })).status).toBe(404)
+    expect(gh.state.merges).toEqual([])
+  })
+
+  it('closes it without merging', async () => {
+    const { gh, number } = await submitted()
+    const response = await act(gh, 'close', { number })
+    expect(await response.json()).toMatchObject({ number, state: 'closed', merged: false })
+    expect(gh.state.merges).toEqual([])
+  })
+
+  it('refuses bad requests before it asks GitHub anything', async () => {
+    const { gh, number } = await submitted()
+    const calls = gh.mock.mock.calls.length
+    for (const data of [{}, { number: 'x' }, { number: 1.5 }, { number: 0 }, { number, head: 'not/a/commit' }]) {
+      expect((await act(gh, 'merge', data)).status).toBe(400)
+    }
+    expect(gh.mock.mock.calls.length).toBe(calls)
+  })
+
+  it('shows how the checks stand with the session', async () => {
+    const get = async (gh: ReturnType<typeof fakeGitHub>, number: number) =>
+      ((await (await handle(new Request(`http://worker/api/repo/erfassung/${number}`, { headers: { cookie } }), env, gh.fn)).json()) as { checks: string }).checks
+    const done = (conclusion: string) => ({ status: 'completed', conclusion })
+    for (const [runs, expected] of [
+      [[done('success')], 'success'],
+      [[done('success'), done('failure')], 'failure'],
+      [[done('success'), { status: 'in_progress', conclusion: null }], 'pending'],
+      [[done('skipped')], 'success'],
+      [[], 'none'],
+    ] as const) {
+      const { gh, number } = await submitted({ checkRuns: [...runs] })
+      expect(await get(gh, number)).toBe(expected)
+    }
+    const { gh, number } = await submitted({ checksStatus: 403 })
+    expect(await get(gh, number)).toBe('unknown') // the app may not read checks: that is no reason to fail
+  })
+
+  it('shows how the checks stand in the list too, but only for sessions waiting for review', async () => {
+    const list = async (gh: ReturnType<typeof fakeGitHub>) =>
+      ((await (await handle(new Request('http://worker/api/repo/erfassungen', { headers: { cookie } }), env, gh.fn)).json()) as { erfassungen: { state: string; checks?: string }[] }).erfassungen
+    const { gh } = await submitted({ checkRuns: [{ status: 'completed', conclusion: 'success' }] })
+    expect(await list(gh)).toMatchObject([{ state: 'submitted', checks: 'success' }])
+    const draft = fakeGitHub()
+    await saveOf(draft, objects(ID_A))
+    expect((await list(draft))[0].checks).toBeUndefined()
+  })
+})
+
+describe('comments on a session', () => {
+  const send = (gh: ReturnType<typeof fakeGitHub>, method: string, path: string, data?: unknown) =>
+    handle(new Request(`http://worker/api${path}`, { method, headers: { cookie }, body: data === undefined ? undefined : JSON.stringify(data) }), env, gh.fn)
+  const started = async () => {
+    const gh = fakeGitHub()
+    const saved = (await (await saveOf(gh, objects(ID_A))).json()) as { pull: { number: number } }
+    return { gh, number: saved.pull.number }
+  }
+  type C = { id: number; kind: string; login: string; text: string; object?: string; field?: string; edited: boolean }
+
+  it('keeps what a comment is about in a note at its end that GitHub does not show', () => {
+    const body = joinComment('Das Datum stimmt nicht.', ID_A, 'date')
+    expect(body.startsWith('Das Datum stimmt nicht.\n\n<!--')).toBe(true)
+    expect(splitComment(body)).toEqual({ text: 'Das Datum stimmt nicht.', object: ID_A, field: 'date' })
+    expect(splitComment(joinComment('Zum Objekt', ID_A))).toEqual({ text: 'Zum Objekt', object: ID_A, field: undefined })
+    expect(joinComment('Zur Erfassung')).toBe('Zur Erfassung')
+    expect(splitComment('Nur Text')).toEqual({ text: 'Nur Text' })
+  })
+
+  it('does not believe a note that is not one', () => {
+    expect(splitComment('Text\n\n<!-- tamandua-comment: {"object":"nicht-eine-id"} -->')).toEqual({ text: 'Text' })
+    expect(splitComment('Text\n\n<!-- tamandua-comment: {kaputt -->')).toEqual({ text: 'Text\n\n<!-- tamandua-comment: {kaputt -->' })
+    expect(splitComment(joinComment('x', ID_A, 'Not A Field'))).toEqual({ text: 'x', object: ID_A, field: undefined })
+  })
+
+  it('writes a comment on the pull request, for a field of an object, and lists it again', async () => {
+    const { gh, number } = await started()
+    const made = await send(gh, 'POST', `/repo/erfassung/${number}/comments`, { text: 'Datierung prüfen', object: ID_A, field: 'date' })
+    expect(made.status).toBe(201)
+    expect(((await made.json()) as { comment: C }).comment).toMatchObject({ login: 'anna', text: 'Datierung prüfen', object: ID_A, field: 'date', kind: 'issue', edited: false })
+    // GitHub has the text with the note, and nothing else is needed to remember what it was about.
+    expect(gh.state.comments[0].body).toContain('<!-- tamandua-comment:')
+    const list = (await (await send(gh, 'GET', `/repo/erfassung/${number}/comments`)).json()) as { comments: C[] }
+    expect(list.comments).toHaveLength(1)
+    expect(list.comments[0]).toMatchObject({ text: 'Datierung prüfen', object: ID_A, field: 'date' })
+  })
+
+  it('lists the comments of the pull request and those on files together, oldest first; a comment on a file is about its object', async () => {
+    const { gh, number } = await started()
+    gh.state.comments.push({ id: 100, number, body: 'Zuerst', login: 'bernd', createdAt: '2026-11-10T09:00:00Z', updatedAt: '2026-11-10T09:30:00Z' })
+    gh.state.reviewComments.push({ id: 200, number, body: 'An der Zeile', login: 'bernd', path: objectPath(ID_A), createdAt: '2026-11-10T08:00:00Z' })
+    gh.state.reviewComments.push({ id: 201, number, body: 'Irgendeine Datei', login: 'bernd', path: 'README.md', createdAt: '2026-11-10T10:00:00Z' })
+    const { comments } = (await (await send(gh, 'GET', `/repo/erfassung/${number}/comments`)).json()) as { comments: C[] }
+    expect(comments.map((c) => [c.text, c.kind, c.object, c.edited])).toEqual([
+      ['An der Zeile', 'review', ID_A, false],
+      ['Zuerst', 'issue', undefined, true],
+      ['Irgendeine Datei', 'review', undefined, false],
+    ])
+  })
+
+  it('changes the text and keeps what it is about', async () => {
+    const { gh, number } = await started()
+    const { comment } = (await (await send(gh, 'POST', `/repo/erfassung/${number}/comments`, { text: 'Entwurf', object: ID_A, field: 'title' })).json()) as { comment: C }
+    const changed = await send(gh, 'PATCH', `/repo/comment/${comment.id}`, { text: 'Besser formuliert' })
+    expect(((await changed.json()) as { comment: C }).comment).toMatchObject({ text: 'Besser formuliert', object: ID_A, field: 'title', edited: true })
+  })
+
+  it('removes a comment', async () => {
+    const { gh, number } = await started()
+    const { comment } = (await (await send(gh, 'POST', `/repo/erfassung/${number}/comments`, { text: 'Weg damit' })).json()) as { comment: C }
+    expect((await send(gh, 'DELETE', `/repo/comment/${comment.id}`)).status).toBe(200)
+    expect(gh.state.comments).toEqual([])
+  })
+
+  it('does not let one change the comment of another (GitHub says no)', async () => {
+    const { gh, number } = await started()
+    gh.state.comments.push({ id: 100, number, body: 'Von Bernd', login: 'bernd', createdAt: 't', updatedAt: 't' })
+    expect((await send(gh, 'PATCH', '/repo/comment/100', { text: 'Meins jetzt' })).status).toBe(403)
+    expect((await send(gh, 'DELETE', '/repo/comment/100')).status).toBe(403)
+    expect(gh.state.comments[0].body).toBe('Von Bernd')
+  })
+
+  it('only handles comments on sessions', async () => {
+    const gh = fakeGitHub()
+    gh.state.refs['feature/x'] = 'c0'
+    gh.state.pulls.push({ number: 91, head: 'feature/x', state: 'open', merged: false, draft: false, title: 'Not a session', body: '' })
+    gh.state.comments.push({ id: 100, number: 91, body: 'Anderswo', login: 'anna', createdAt: 't', updatedAt: 't' })
+    expect((await send(gh, 'GET', '/repo/erfassung/91/comments')).status).toBe(404)
+    expect((await send(gh, 'POST', '/repo/erfassung/91/comments', { text: 'Hallo' })).status).toBe(404)
+    expect((await send(gh, 'PATCH', '/repo/comment/100', { text: 'Hallo' })).status).toBe(404)
+    expect((await send(gh, 'DELETE', '/repo/comment/100')).status).toBe(404)
+    expect(gh.state.comments).toHaveLength(1)
+  })
+
+  it('refuses a bad request before it asks GitHub anything', async () => {
+    const { gh, number } = await started()
+    const calls = gh.mock.mock.calls.length
+    for (const data of [{}, { text: 5 }, { text: '   ' }, { text: 'x'.repeat(5001) }, { text: 'ok', object: 'nope' }, { text: 'ok', object: ID_A, field: 'Drop Table' }]) {
+      expect((await send(gh, 'POST', `/repo/erfassung/${number}/comments`, data)).status).toBe(400)
+    }
+    expect((await send(gh, 'PATCH', '/repo/comment/1', { text: '' })).status).toBe(400)
+    expect(gh.mock.mock.calls.length).toBe(calls)
+  })
+
+  it('does not let a comment carry a note of its own into the text', async () => {
+    const { gh, number } = await started()
+    await send(gh, 'POST', `/repo/erfassung/${number}/comments`, { text: 'Sieh <!-- tamandua-comment: {"object":"' + ID_B + '"} -->' })
+    const { comments } = (await (await send(gh, 'GET', `/repo/erfassung/${number}/comments`)).json()) as { comments: C[] }
+    expect(comments[0].object).toBeUndefined()
+  })
+
+  it('is for signed-in people only', async () => {
+    const { gh, number } = await started()
+    expect((await handle(new Request(`http://worker/api/repo/erfassung/${number}/comments`), env, gh.fn)).status).toBe(401)
+  })
+})
+
+describe('commentsOf', () => {
+  it('shows a person without an account as unknown', () => {
+    const c = commentsOf({ issue: [{ id: 1, body: 'x', created_at: 'a', updated_at: 'a', user: null }], review: [] })[0]
+    expect(c.login).toBe('unbekannt')
   })
 })

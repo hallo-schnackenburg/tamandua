@@ -4,6 +4,25 @@
 // by other means (polling) that nothing is missed while it is closed: every time it opens, `onNews`
 // is called once, because something may have happened meanwhile.
 
+/** What the Worker tells: `push` (the archive changed), `pull` (a session changed), `comment` (a comment on a session). No `type` for news that is not understood. */
+export interface News {
+  type?: 'push' | 'pull' | 'comment'
+  /** The pull request it is about, if it is known. */
+  number?: number
+}
+
+function newsOf(data: unknown): News {
+  try {
+    const raw = typeof data === 'string' ? (JSON.parse(data) as { type?: unknown; number?: unknown }) : {}
+    return {
+      type: raw.type === 'push' || raw.type === 'pull' || raw.type === 'comment' ? raw.type : undefined,
+      number: typeof raw.number === 'number' ? raw.number : undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
 /** The parts of a WebSocket that are used (so that a stand-in can be used in tests). */
 export interface Socket {
   onopen: (() => void) | null
@@ -32,7 +51,7 @@ export class Live {
   /** Whether the connection is open right now. */
   open = false
   #url: string
-  #onNews: () => void
+  #onNews: (news?: News) => void
   #onState: (open: boolean) => void
   #connect: (url: string) => Socket
   #socket: Socket | undefined
@@ -42,7 +61,7 @@ export class Live {
   #pong: ReturnType<typeof setTimeout> | undefined
   #wanted = false
 
-  constructor(url: string, onNews: () => void, onState: (open: boolean) => void = () => {}, connect: (url: string) => Socket = (u) => new WebSocket(u) as unknown as Socket) {
+  constructor(url: string, onNews: (news?: News) => void, onState: (open: boolean) => void = () => {}, connect: (url: string) => Socket = (u) => new WebSocket(u) as unknown as Socket) {
     this.#url = url
     this.#onNews = onNews
     this.#onState = onState
@@ -89,7 +108,7 @@ export class Live {
       clearTimeout(this.#pong) // it is alive
       this.#pong = undefined
       if (event.data === 'pong') return
-      this.#onNews()
+      this.#onNews(newsOf(event.data))
     }
     const lost = () => {
       if (this.#socket !== socket) return // an old connection

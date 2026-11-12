@@ -148,6 +148,40 @@ export interface ListedPull {
   head: { ref: string; sha: string }
 }
 
+/** A pull request by its number, as far as the review needs it. */
+export interface PullInfo {
+  number: number
+  node_id: string
+  html_url: string
+  state: 'open' | 'closed'
+  merged: boolean
+  draft?: boolean
+  /** GitHub works this out when asked; null until it has. */
+  mergeable: boolean | null
+  title: string
+  head: { ref: string; sha: string }
+  base: { ref: string }
+}
+
+/** How the automatic checks of a commit (the validation of the data) stand: none, still running, failed, or all green. */
+export type Checks = 'none' | 'pending' | 'failure' | 'success' | 'unknown'
+
+/** A comment as GitHub gives it (an ordinary one on the pull request, or one on a line of a file in it). */
+export interface RawComment {
+  id: number
+  body: string
+  created_at: string
+  updated_at: string
+  user: { login: string; avatar_url: string } | null
+  /** Only for a comment on a file. */
+  path?: string
+  /** Only for the comment of an issue or pull request, as asked for by its number. */
+  issue_url?: string
+}
+
+/** 100 comments a page; a session is discussed by a few people, so this is far more than needed. */
+const MAX_COMMENT_PAGES = 5
+
 /** The compare API shows at most 300 files. */
 const MAX_CHANGE_PAGES = 3
 
@@ -304,16 +338,119 @@ export class Repo {
     return this.call<ListedPull[]>('GET', `/pulls?state=all&base=${this.base}&sort=created&direction=desc&per_page=100`)
   }
 
-  /** What the pull request changes: its head commit and the files it adds, changes or removes. */
-  async pullFiles(number: number): Promise<{ head: string; files: { filename: string; status: string }[] }> {
-    const data = await this.call<{ head: { sha: string } }>('GET', `/pulls/${number}`)
+  /** The pull request with this number (any; `sessionPull` is for those that are sessions). */
+  async info(number: number): Promise<PullInfo> {
+    return this.call<PullInfo>('GET', `/pulls/${number}`)
+  }
+
+  /** What the pull request changes: the pull request itself and the files it adds, changes or removes. */
+  async pullFiles(number: number): Promise<{ head: string; pull: PullInfo; files: { filename: string; status: string }[] }> {
+    const pull = await this.info(number)
     const files: { filename: string; status: string }[] = []
     for (let page = 1; page <= MAX_FILE_PAGES; page++) {
       const batch = await this.call<{ filename: string; status: string }[]>('GET', `/pulls/${number}/files?per_page=100&page=${page}`)
       files.push(...batch)
       if (batch.length < 100) break
     }
-    return { head: data.head.sha, files }
+    return { head: pull.head.sha, pull, files }
+  }
+
+  /** The pull request of a session: only those can be handled here (their branch is erfassung/<login>/<slug>, they go to the base branch). */
+  private async sessionPull(number: number): Promise<PullInfo> {
+    const info = await this.info(number)
+    if (!/^erfassung\/[A-Za-z0-9-]+\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(info.head.ref) || info.base.ref !== this.base) {
+      throw new GitHubError('Das ist keine Erfassung.', 404)
+    }
+    return info
+  }
+
+  /** A pull request that waits for review: open and not a draft. Anything else is a 409 with the reason. */
+  private async waiting(number: number): Promise<PullInfo> {
+    const info = await this.sessionPull(number)
+    if (info.state !== 'open') throw new GitHubError('Diese Erfassung ist nicht mehr offen.', 409)
+    if (info.draft) throw new GitHubError('Diese Erfassung ist noch ein Entwurf und nicht eingereicht.', 409)
+    return info
+  }
+
+  /**
+   * Accepts a session: its pull request is merged into the base branch as one commit. `head` is the commit the
+   * person looked at: if the session changed since, nothing is merged (409).
+   */
+  async merge(number: number, head?: string): Promise<Pull> {
+    await this.waiting(number)
+    try {
+      await this.call('PUT', `/pulls/${number}/merge`, { merge_method: 'squash', ...(head ? { sha: head } : {}) })
+    } catch (error) {
+      // 405: not mergeable (checks, conflicts, rules); 409: the head moved.
+      if (error instanceof GitHubError && (error.status === 405 || error.status === 409)) throw new GitHubError(error.message, 409)
+      throw error
+    }
+    return this.pull(number)
+  }
+
+  /** Closes a session without merging it (it can be opened again on GitHub). */
+  async reject(number: number): Promise<Pull> {
+    await this.waiting(number)
+    await this.call('PATCH', `/pulls/${number}`, { state: 'closed' })
+    return this.pull(number)
+  }
+
+  /** The comments on a session: those on the pull request itself, and those on files in it (made on GitHub). */
+  async comments(number: number): Promise<{ issue: RawComment[]; review: RawComment[] }> {
+    const all = async (path: string): Promise<RawComment[]> => {
+      const found: RawComment[] = []
+      for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
+        const batch = await this.call<RawComment[]>('GET', `${path}?per_page=100&page=${page}`)
+        found.push(...batch)
+        if (batch.length < 100) break
+      }
+      return found
+    }
+    await this.sessionPull(number)
+    return { issue: await all(`/issues/${number}/comments`), review: await all(`/pulls/${number}/comments`) }
+  }
+
+  /** Writes a comment on the pull request of a session (as the person whose token this is). */
+  async addComment(number: number, body: string): Promise<RawComment> {
+    await this.sessionPull(number)
+    return this.call<RawComment>('POST', `/issues/${number}/comments`, { body })
+  }
+
+  /** The comment (of the pull request of a session) with this id: it is only handled if it is one on a session. */
+  async issueComment(id: number): Promise<RawComment> {
+    const comment = await this.call<RawComment>('GET', `/issues/comments/${id}`)
+    const number = Number(/\/issues\/(\d+)$/.exec(comment.issue_url ?? '')?.[1])
+    if (!Number.isInteger(number)) throw new GitHubError('Das ist kein Kommentar zu einer Erfassung.', 404)
+    await this.sessionPull(number)
+    return comment
+  }
+
+  /** Changes the text of a comment. GitHub allows it for the person who wrote it, and for nobody else without the right to. */
+  async editComment(id: number, body: string): Promise<RawComment> {
+    await this.issueComment(id)
+    return this.call<RawComment>('PATCH', `/issues/comments/${id}`, { body })
+  }
+
+  async deleteComment(id: number): Promise<void> {
+    await this.issueComment(id)
+    await this.call('DELETE', `/issues/comments/${id}`)
+  }
+
+  /** How the checks of a commit stand. Unknown if GitHub does not tell (the app may lack the permission to read checks). */
+  async checks(commit: string): Promise<Checks> {
+    try {
+      const runs = await this.call<{ check_runs: { status: string; conclusion: string | null }[] }>('GET', `/commits/${commit}/check-runs?per_page=100`)
+      const status = await this.call<{ state: string; total_count: number }>('GET', `/commits/${commit}/status`)
+      const states: Checks[] = runs.check_runs.map((run) =>
+        run.status !== 'completed' ? 'pending' : ['success', 'neutral', 'skipped'].includes(run.conclusion ?? '') ? 'success' : 'failure',
+      )
+      if (status.total_count > 0) states.push(status.state === 'success' ? 'success' : status.state === 'pending' ? 'pending' : 'failure')
+      if (states.length === 0) return 'none'
+      return states.includes('failure') ? 'failure' : states.includes('pending') ? 'pending' : 'success'
+    } catch (error) {
+      if (error instanceof GitHubError && error.status !== 401) return 'unknown'
+      throw error
+    }
   }
 
   /** The newest commit of the base branch and everything in it, with the hash of each file (the caller picks the object files). */

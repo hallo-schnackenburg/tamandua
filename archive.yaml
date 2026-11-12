@@ -16,11 +16,11 @@ object_types:
 
 entity_types:
   - person
-  - place
-  - building
   - business
-  - event
+  - building
+  - place
   - thing
+  - event
 
 # What kind of place an entry of "external" points to: where the content of an object lives
 # when it is not in our own store.

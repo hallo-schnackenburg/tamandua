@@ -152,7 +152,7 @@
   {#if ws.shown.length === 0}
     <p class="empty-state">
       <span>Keine Objekte</span>
-      <small>{ws.current && ws.current.state !== 'open' ? 'Diese Erfassung ist leer.' : 'Lege Dateien ab und beschreibe sie, oder füge mit + ein leeres Objekt hinzu.'}</small>
+      <small>{ws.current?.state === 'merged' ? 'Diese Erfassung ist leer.' : 'Lege Dateien ab und beschreibe sie, oder füge mit + ein leeres Objekt hinzu.'}</small>
     </p>
   {/if}
 </div>

@@ -12,6 +12,9 @@ describe('route', () => {
     [`#/datenbank?gruppe=${ID}`, { tab: 'database', group: ID }],
     [`#/datenbank/${ID}?gruppe=${ID}`, { tab: 'database', id: ID, group: ID }],
     ['#/datenbank?gruppe=keine', { tab: 'database', group: 'keine' }],
+    ['#/pruefen', { tab: 'review' }],
+    ['#/pruefen/42', { tab: 'review', pull: 42 }],
+    [`#/pruefen/42/${ID}`, { tab: 'review', pull: 42, id: ID }],
   ])('%s is read and written back as it is', (hash, route) => {
     expect(parseRoute(hash)).toEqual(route)
     expect(formatRoute(route)).toBe(hash)
@@ -27,6 +30,7 @@ describe('route', () => {
     for (const odd of ['', '#', '#/', '#/foo', '#login', '#/constructor', '#/__proto__/x']) expect(parseRoute(odd)).toBeUndefined()
     expect(parseRoute('#/datenbank/nicht-eine-id')).toEqual({ tab: 'database' })
     expect(parseRoute('#/datenbank?gruppe=irgendwas')).toEqual({ tab: 'database' })
+    expect(parseRoute('#/pruefen/abc/xyz')).toEqual({ tab: 'review' })
     expect(parseRoute('#/erfassen/%E0%A4%A')).toEqual({ tab: 'capture' }) // a broken escape does not break the page
   })
 

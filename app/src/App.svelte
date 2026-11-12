@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import Chat from './Chat.svelte'
-  import Files from './Files.svelte'
-  import Objects from './Objects.svelte'
-  import Sessions from './Sessions.svelte'
   import Database from './Database.svelte'
+  import Erfassungen from './Erfassungen.svelte'
   import { ArchiveDb } from './database.svelte.js'
+  import { ReviewDb } from './review.svelte.js'
+  import { loadReview, saveReview } from './db.js'
   import { liveUrl } from './live.js'
   import { FakeAgent } from './agent.js'
   import { WorkerAgent } from './worker-agent.js'
@@ -21,6 +20,7 @@
   const backend = workerUrl ? new HttpBackend(workerUrl) : new FakeBackend()
   const ws = new Workspace(workerUrl ? new S3Store(workerUrl) : new FakeStore(), workerUrl ? new WorkerAgent(workerUrl) : new FakeAgent(), backend)
   const archive = new ArchiveDb(backend.archive, workerUrl ? liveUrl(workerUrl, location.href) : undefined)
+  const review = new ReviewDb(backend, archive, () => (ws.login.state === 'user' ? ws.login.user.login.replace(/[^A-Za-z0-9-]/g, '-') : undefined), { load: loadReview, save: saveReview }) // (as the branch name has it)
 
   // The copy of the archive in the browser is kept up to date for as long as somebody is signed in.
   // (A derived value: the effect only runs again when somebody signs in or out, not whenever the session is renewed.)
@@ -28,21 +28,31 @@
   $effect(() => {
     if (!signedIn) return
     void archive.start()
-    return () => archive.stop()
+    review.start()
+    // News that a session changed (accepted, closed ...) reaches the sessions of this person at once, not at the next look.
+    const unsubscribe = archive.subscribe(() => void ws.checkPulls())
+    return () => {
+      unsubscribe()
+      archive.stop()
+      review.stop()
+    }
   })
 
-  // The tabs separate the UI concepts: capturing (the three panes) and the database. Only a convenience of this browser.
-  type Tab = 'capture' | 'database'
+  // Two tabs: the database (what is in the archive) and the sessions (everything on its way into it: capturing, reviewing, discussing).
+  // Only a convenience of this browser.
+  type Tab = 'database' | 'sessions'
   const TABS: { id: Tab; label: string }[] = [
-    { id: 'capture', label: 'Erfassen' },
     { id: 'database', label: 'Datenbank' },
+    { id: 'sessions', label: 'Erfassungen' },
   ]
   let tab = $state<Tab>(readTab())
+  /** In the sessions: whether the chosen one is one of this person's (worked on in place) or somebody else's (read and discussed). */
+  let mode = $state<'own' | 'other'>('own')
   function readTab(): Tab {
     try {
-      return localStorage.getItem('tamandua.tab') === 'database' ? 'database' : 'capture'
+      return localStorage.getItem('tamandua.tab') === 'database' ? 'database' : 'sessions'
     } catch {
-      return 'capture'
+      return 'sessions'
     }
   }
   function show(next: Tab) {
@@ -68,15 +78,26 @@
 
   /** Makes the app show what the route says. */
   function apply(route: Route) {
-    show(route.tab)
     if (route.tab === 'database') {
+      show('database')
       archive.selectedId = route.id
       archive.groupId = route.group
-    } else if (route.session && route.session !== ws.currentId) {
-      if (ws.sessions.some((s) => s.id === route.session)) {
-        ws.selectSession(route.session)
-        pendingSession = undefined
-      } else pendingSession = route.session
+    } else if (route.tab === 'review') {
+      show('sessions')
+      // The pull request of one's own session is worked on in place.
+      const own = route.pull === undefined ? undefined : ws.sessions.find((s) => s.pull === route.pull)
+      if (own) ws.selectSession(own.id)
+      mode = own ? 'own' : 'other'
+      void review.select(route.pull, route.id)
+    } else {
+      show('sessions')
+      mode = 'own'
+      if (route.session && route.session !== ws.currentId) {
+        if (ws.sessions.some((s) => s.id === route.session)) {
+          ws.selectSession(route.session)
+          pendingSession = undefined
+        } else pendingSession = route.session
+      }
     }
   }
   // The address, or the one before a sign-in (GitHub sends the browser back to the bare address).
@@ -91,7 +112,13 @@
     }
   })
 
-  const current = $derived<Route>(tab === 'database' ? { tab, id: archive.selectedId, group: archive.groupId } : { tab, session: ws.currentId })
+  const current = $derived<Route>(
+    tab === 'database'
+      ? { tab, id: archive.selectedId, group: archive.groupId }
+      : mode === 'own'
+        ? { tab: 'capture', session: ws.currentId }
+        : { tab: 'review', pull: review.selectedPull, id: review.selectedId },
+  )
   let last: Route | undefined
   $effect(() => {
     const route = current
@@ -99,7 +126,10 @@
     const hash = formatRoute(route)
     if (hash !== location.hash) {
       // The first address, and the session becoming known while the page loads, are not steps of the user's: they replace the entry.
-      const replace = last === undefined || (last.tab === 'capture' && route.tab === 'capture' && last.session === undefined)
+      const replace =
+        last === undefined ||
+        (last.tab === 'capture' && route.tab === 'capture' && last.session === undefined) ||
+        (last.tab === 'review' && route.tab === 'review' && last.pull === route.pull && last.id === undefined) // the first object of a session being shown
       history[replace ? 'replaceState' : 'pushState'](null, '', hash)
     }
     last = route
@@ -120,14 +150,6 @@
       return `Du bist als „${params.get('user') ?? '?'}“ bei GitHub angemeldet, aber noch nicht freigeschaltet. Gib dein GitHub-Konto beim Archiv-Team an, damit es dich ins Repository einlädt.`
     }
     return 'Die Anmeldung bei GitHub hat nicht geklappt. Bitte versuche es noch einmal.'
-  }
-
-  let confirming = $state(false)
-
-  function pick(event: Event) {
-    const input = event.currentTarget as HTMLInputElement
-    ws.addDropped(input.files ?? [])
-    input.value = '' // so that the same file can be picked again
   }
 
   onMount(() => {
@@ -190,30 +212,11 @@
       <img class="logo" src={`${import.meta.env.BASE_URL}tamandua.png`} alt="Tamandua" title="Tamandua" height="52" />
       <div class="tabs" role="tablist" aria-label="Ansicht">
         {#each TABS as t (t.id)}
-          <button role="tab" class:active={tab === t.id} aria-selected={tab === t.id} onclick={() => show(t.id)}>{t.label}</button>
+          <button role="tab" class:active={tab === t.id} aria-selected={tab === t.id} onclick={() => show(t.id)}>
+            {t.label}{#if t.id === 'sessions' && review.waiting.length > 0}<span class="badge" title="{review.waiting.length} eingereichte Erfassung(en)">{review.waiting.length}</span>{/if}
+          </button>
         {/each}
       </div>
-      {#if tab === 'capture'}
-      <Sessions workspace={ws} />
-      {#if ws.current?.state === 'submitted'}
-        <span class="state submitted">Eingereicht</span>
-      {:else if ws.current?.state === 'merged'}
-        <span class="state merged">Übernommen</span>
-      {:else if confirming}
-        <span class="confirm">
-          Erfassung einreichen?
-          <button class="submit" onclick={() => { confirming = false; void ws.submit() }}>Ja, einreichen</button>
-          <button class="plain" onclick={() => (confirming = false)}>Abbrechen</button>
-        </span>
-      {:else}
-        <!-- The wrapper carries the hint: a disabled button shows none in every browser. -->
-        <span class="submit-wrap" title={ws.notReady.length > 0 ? 'Einreichen geht erst, wenn alle Objekte vollständig sind.' : ''}>
-          <button class="submit" disabled={ws.current?.state !== 'open' || ws.shown.length === 0 || ws.notReady.length > 0 || ws.submitting} onclick={() => (confirming = true)}>
-            {ws.submitting ? 'Wird eingereicht …' : 'Einreichen'}
-          </button>
-        </span>
-      {/if}
-      {/if}
       <span class="sync" class:failed={ws.syncState === 'failed'} role="status">
         {#if ws.syncState === 'failed'}
           Noch nicht in GitHub gesichert{ws.syncError ? `: ${ws.syncError}` : ''}. Neuer Versuch in einer Minute.
@@ -233,49 +236,9 @@
       <button class="link" onclick={() => ws.logout()}>Abmelden</button>
     </header>
 
-    <div class="panes" class:gone={tab !== 'capture'}>
-      <section class="pane">
-        <h2>Chat</h2>
-        <Chat workspace={ws} />
-      </section>
-
-      <section class="pane">
-        <h2>
-          Dateien
-          {#if ws.progress}
-            <span class="progress" role="status"><span class="spinner" aria-hidden="true"></span>{ws.progress.done} von {ws.progress.total}</span>
-          {/if}
-          <label class="add" title="Dateien hinzufügen" aria-label="Dateien hinzufügen">
-            +
-            <input type="file" multiple onchange={pick} />
-          </label>
-        </h2>
-        <Files workspace={ws} />
-      </section>
-
-      <section class="pane">
-        <h2>
-          Objekte
-          {#if ws.current?.state === 'open'}
-            <button class="add" title="Leeres Objekt hinzufügen" aria-label="Leeres Objekt hinzufügen" onclick={() => ws.addObject()}>+</button>
-          {/if}
-        </h2>
-        {#if ws.current && ws.current.state !== 'open'}
-          {@const session = ws.current}
-          <p class="banner {session.state}" role="status">
-            {#if session.state === 'submitted'}
-              Diese Erfassung ist eingereicht. Sie kann hier nicht mehr geändert werden.
-              {#if session.url}<a href={session.url} target="_blank" rel="noreferrer">Auf GitHub ansehen</a>{/if}
-            {:else}
-              Diese Erfassung ist ins Archiv übernommen.
-              {#if session.url}<a href={session.url} target="_blank" rel="noreferrer">Auf GitHub ansehen</a>{/if}
-            {/if}
-          </p>
-        {/if}
-        <Objects workspace={ws} />
-      </section>
-    </div>
     {#if tab === 'database'}<Database {archive} filesBase={ws.filesBase} />{/if}
+    <!-- Kept alive behind the other tab: the chat and the files stay as they are. -->
+    <div class="sessions" class:gone={tab !== 'sessions'}><Erfassungen {ws} {review} filesBase={ws.filesBase} bind:mode /></div>
   {:else if ws.login.state === 'loading'}
     <div class="welcome"><p class="quiet">Einen Moment …</p></div>
   {:else}
@@ -304,32 +267,13 @@
   .tabs { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 2px; height: 2.3rem; box-sizing: border-box; padding: 3px; border-radius: 999px; background: #f0f0ee; }
   .tabs button { height: 100%; padding: 0 16px; border: 1px solid transparent; border-radius: 999px; background: none; color: #666; font-weight: 600; }
   .tabs button:hover:not(.active) { color: #36c; }
+  .tabs .badge { margin-left: 6px; min-width: 1.2rem; padding: 0 5px; border-radius: 999px; background: #e07b1a; color: #fff; font-size: 0.7rem; line-height: 1.2rem; display: inline-block; text-align: center; }
   .tabs button.active { background: #fff; border-color: #ddd; color: #36c; cursor: default; box-shadow: 0 1px 2px rgb(0 0 0 / 0.06); }
   .sync { color: #777; }
   .sync.failed { color: #a11; }
   /* The state is a quiet label (gray, with a dot); the way forward is a solid blue button. They must not be mistaken for each other. */
-  .state { display: inline-flex; align-items: center; gap: 6px; height: 1.4rem; box-sizing: border-box; padding: 0 10px; border-radius: 999px; background: #f0f0ee; color: #666; font-size: 0.72rem; }
-  .state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #999; }
-  .state.submitted { background: #fdebd7; color: #a85408; }
-  .state.submitted::before { background: #e07b1a; }
-  .state.merged { background: #e9f5ec; color: #2a7a3b; }
-  .state.merged::before { background: #3aa655; }
-  button.submit { height: 2.3rem; padding: 0 18px; border-radius: 999px; border: 0; background: #36c; color: #fff; font-weight: 600; box-shadow: 0 1px 2px rgb(51 102 204 / 0.35); }
-  button.submit:hover:not(:disabled) { background: #2a58b8; }
-  button.submit:disabled { background: #b4c3e6; box-shadow: none; cursor: default; }
-  .submit-wrap { display: inline-flex; }
-  button.plain { border-radius: 999px; }
-  .progress { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 400; color: #777; }
-  .progress + .add { margin-left: 6px; }
-  .spinner { width: 10px; height: 10px; border: 1.5px solid #b9c8ee; border-top-color: #36c; border-radius: 50%; animation: spin 0.8s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .add { margin-left: auto; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 50%; color: #36c; font-size: 1.3rem; font-weight: 400; line-height: 1; cursor: pointer; }
-  button.add { padding: 0; border: 0; background: none; }
-  .add:hover { background: #eef2fb; }
-  .add input { display: none; }
   .user { display: inline-flex; align-items: center; gap: 6px; }
   .user img { border-radius: 50%; }
-  .confirm { display: inline-flex; align-items: center; gap: 8px; }
   button { font: inherit; padding: 4px 10px; border: 1px solid #ccc; border-radius: var(--r-m); background: #fff; cursor: pointer; }
   button.primary, a.primary { background: #36c; border-color: #36c; color: #fff; }
   button:disabled { opacity: 0.45; cursor: default; }
@@ -342,16 +286,10 @@
   .welcome p { margin: 0; }
   .button { display: inline-block; padding: 8px 16px; border-radius: var(--r-m); text-decoration: none; }
   .notice { color: #a11; }
-  .banner { margin: 0 0 8px; padding: 6px 10px; border-radius: var(--r-m); font-size: 0.85rem; background: #eef2fb; color: #345; }
-  .banner.submitted { background: #fdebd7; color: #7a4308; }
-  .banner.merged { background: #edf7ef; }
-  .banner a { color: #36c; margin: 0 4px; }
   .quiet { color: #888; font-size: 0.9rem; }
-  .panes { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); /* minmax(0, …): long YAML lines must not widen the pane */ gap: 12px; min-height: 0; }
-  .panes.gone { display: none; }
   /* The hint of an empty pane: centered below the heading, on the same height in every pane. */
   :global(.empty-state) { position: absolute; margin: 0; padding: 0; inset: calc(20px + 1.6rem) 12px 12px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; line-height: 1.3; color: #aaa; text-align: center; pointer-events: none; }
   :global(.empty-state small) { font-size: 0.78rem; color: #c4c4c4; }
-  .pane { position: relative; display: flex; flex-direction: column; min-height: 0; background: #fff; border-radius: var(--r-m); padding: 12px; }
-  h2 { display: flex; align-items: center; height: 1.6rem; margin: 0 0 8px; font-size: 1rem; }
+  .sessions { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .sessions.gone { display: none; }
 </style>
