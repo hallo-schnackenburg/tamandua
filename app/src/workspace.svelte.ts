@@ -3,7 +3,7 @@
 // (`$state`) outside of a component: everything declared with `$state` here updates
 // whatever shows it, wherever that is.
 
-import { addFile, readField, readValue, removeFile, setField, ulid, validateObjectYaml, type FileEntry } from '@tamandua/core'
+import { addFile, mergeObject, readField, readValue, removeFile, setField, ulid, validateObjectYaml, type FileEntry } from '@tamandua/core'
 import type { Agent, ToolCall } from './agent.js'
 import { withoutBlobs } from './blobs.js'
 import * as db from './db.js'
@@ -64,7 +64,13 @@ export interface Session {
   deleted: Removed[]
   /** Made by the app on its own and not named by the person: goes away again while it is empty (see `#begin`). */
   auto?: true
+  /** The login the branch is named after, when somebody else started the session. It is worked on like any other; `id` is then `owner/slug`. */
+  owner?: string
+  /** The newest commit of the branch that is known here (after our own save or after looking at it): if it is still the head, there is nothing to take over. */
+  head?: string
 }
+
+const mineOpen = (s: Session): boolean => s.state === 'open' && !s.owner
 
 /** Where an object stands, for the badge on its row. */
 export type Standing = 'local' | 'changed' | 'saving' | 'failed' | 'saved' | 'submitted' | 'merged'
@@ -345,7 +351,7 @@ export class Workspace {
   }
 
   #ref(session: Session): SessionRef {
-    return { slug: session.id, name: session.name }
+    return { slug: session.id.slice(session.id.lastIndexOf('/') + 1), name: session.name, ...(session.owner ? { owner: session.owner } : {}) }
   }
 
   /** Why a change to the object is refused, in words for the user. */
@@ -377,7 +383,7 @@ export class Workspace {
       this.objects = objects
       this.#adopt()
       this.#repairLinks()
-      this.currentId = this.sessions.find((s) => s.id === ui?.session)?.id ?? (this.sessions.find((s) => s.state === 'open') ?? this.sessions[0])?.id
+      this.currentId = this.sessions.find((s) => s.id === ui?.session)?.id ?? (this.sessions.find(mineOpen) ?? this.sessions[0])?.id
       if (ui) {
         // Selection and open object as the user left them, as far as the files still exist.
         const known = new Set(files.map((f) => f.sha256))
@@ -483,7 +489,7 @@ export class Workspace {
   #openSession(): Session | undefined {
     const current = this.current
     if (current) return current.state !== 'merged' ? current : undefined
-    const open = this.sessions.find((s) => s.state === 'open')
+    const open = this.sessions.find(mineOpen)
     const session = open ?? this.#add(defaultName())
     this.currentId = session.id
     this.#markUi()
@@ -502,7 +508,7 @@ export class Workspace {
    */
   removable(session: Session): boolean {
     if (session.state === 'merged') return true
-    return this.#empty(session) && this.sessions.some((s) => s.state === 'open' && s.id !== session.id)
+    return this.#empty(session) && this.sessions.some((s) => mineOpen(s) && s.id !== session.id)
   }
 
   removeSession(id: string) {
@@ -531,7 +537,7 @@ export class Workspace {
     this.selection = this.selection.filter((sha) => !shas.has(sha))
     if (this.active && shas.has(this.active)) this.active = undefined
     if (this.activeObjectId && gone.some((o) => o.id === this.activeObjectId)) this.activeObjectId = undefined
-    if (this.currentId === id) this.currentId = (this.sessions.find((s) => s.state === 'open') ?? this.sessions[0])?.id
+    if (this.currentId === id) this.currentId = (this.sessions.find(mineOpen) ?? this.sessions[0])?.id
     this.#markUi()
     this.#schedule()
     if (!quiet) this.#say('log', `Die Erfassung „${session.name}“ wurde aus der Ansicht entfernt.`)
@@ -552,7 +558,7 @@ export class Workspace {
     await this.#restore()
     this.#dropAuto()
     this.#ensureOpen(false)
-    if (!this.current) this.currentId = [...this.sessions].reverse().find((s) => s.state === 'open')?.id ?? this.sessions[this.sessions.length - 1]?.id
+    if (!this.current) this.currentId = [...this.sessions].reverse().find(mineOpen)?.id ?? this.sessions[this.sessions.length - 1]?.id
     this.#markUi()
   }
 
@@ -563,7 +569,7 @@ export class Workspace {
    */
   async #restore() {
     if (this.login.state !== 'user') return
-    const me = this.login.user.login.replace(/[^A-Za-z0-9-]/g, '-') // as the branch name has it
+    const me = this.#me()
     let list
     try {
       list = await this.#backend.erfassungen()
@@ -587,8 +593,40 @@ export class Workspace {
     if (restored > 0) this.#say('status', restored === 1 ? 'Eine Erfassung wurde aus GitHub geladen.' : `${restored} Erfassungen wurden aus GitHub geladen.`)
   }
 
-  #bringBack(remote: RemoteErfassung, content: RemoteContent) {
-    const session: Session = { id: remote.slug, name: remote.name, state: remote.state, createdAt: Date.parse(remote.createdAt) || Date.now(), deleted: [] }
+  /** The login as the branch names have it. */
+  #me(): string {
+    return this.login.state === 'user' ? this.login.user.login.replace(/[^A-Za-z0-9-]/g, '-') : ''
+  }
+
+  /**
+   * Takes a session of somebody else into this browser (on first click): from then on it is worked on like the own ones.
+   * Its objects and files are read from the branch; saving goes to that branch. Returns the session, or nothing (with a
+   * note in the chat) if GitHub could not be read. Sessions that are accepted or closed are not taken over.
+   */
+  async adopt(remote: RemoteErfassung): Promise<Session | undefined> {
+    const known = this.sessions.find((s) => s.pull === remote.number)
+    if (known) return known
+    if (this.login.state !== 'user' || remote.closed || remote.state === 'merged') return undefined
+    try {
+      const content = await this.#backend.erfassung(remote.number)
+      return this.sessions.find((s) => s.pull === remote.number) ?? this.#bringBack(remote, content)
+    } catch (error) {
+      if (!(error instanceof SignedOut)) this.#say('status', `Die Erfassung „${remote.name}“ konnte nicht aus GitHub geladen werden: ${(error as Error).message}`)
+      return undefined
+    }
+  }
+
+  #bringBack(remote: RemoteErfassung, content: RemoteContent): Session {
+    const owner = remote.login === this.#me() ? undefined : remote.login
+    const session: Session = {
+      id: owner ? `${owner}/${remote.slug}` : remote.slug,
+      name: remote.name,
+      state: remote.state,
+      createdAt: Date.parse(remote.createdAt) || Date.now(),
+      deleted: [],
+      head: content.head,
+      ...(owner ? { owner } : {}),
+    }
     if (!remote.closed) {
       session.pull = remote.number
       session.url = remote.url
@@ -601,17 +639,96 @@ export class Workspace {
     for (const { id, text } of content.objects) {
       this.objects.push({ id, number: ++number, text, updatedAt: Date.now(), sessionId: session.id, synced: text })
       this.#dirtyObjects.add(id)
-      const entries = readValue(text, 'files')
-      for (const entry of Array.isArray(entries) ? (entries as FileEntry[]) : []) {
-        const sha256 = entry?.sha256
-        if (typeof sha256 !== 'string' || this.files.some((f) => f.sha256 === sha256)) continue
-        const name = typeof entry.original_name === 'string' ? entry.original_name : sha256.slice(0, 12)
-        this.files.push({ sha256, name, bytes: typeof entry.bytes === 'number' ? entry.bytes : 0, entry, status: 'uploaded', objectId: id, addedAt: Date.now() })
-        this.#dirtyFiles.add(sha256)
-        if (content.files) void this.#loadPreview(sha256, content.files, entry)
-      }
+      this.#importFiles(text, id, content.files)
     }
     this.#schedule()
+    return session
+  }
+
+  /** The files an object's YAML lists that are not known here yet, with their previews from the bucket. */
+  #importFiles(text: string, objectId: string, base: string | undefined) {
+    const entries = readValue(text, 'files')
+    for (const entry of Array.isArray(entries) ? (entries as FileEntry[]) : []) {
+      const sha256 = entry?.sha256
+      if (typeof sha256 !== 'string') continue
+      const known = this.files.find((f) => f.sha256 === sha256)
+      if (known) {
+        if (!known.objectId) {
+          known.objectId = objectId
+          this.#dirtyFiles.add(sha256)
+        }
+        continue
+      }
+      const name = typeof entry.original_name === 'string' ? entry.original_name : sha256.slice(0, 12)
+      this.files.push({ sha256, name, bytes: typeof entry.bytes === 'number' ? entry.bytes : 0, entry, status: 'uploaded', objectId, addedAt: Date.now() })
+      this.#dirtyFiles.add(sha256)
+      if (base) void this.#loadPreview(sha256, base, entry)
+    }
+  }
+
+  /**
+   * Puts what the session's branch holds now together with what is here. An object that was not changed here takes over the
+   * branch's version; one that was changed on both sides is merged field by field (a field changed differently on both sides
+   * keeps this side's value, and the chat tells what the branch had); objects that are new on the branch are added, and ones
+   * taken out there go away unless they were changed here. What results counts as changed here, so the next save brings it to the branch.
+   */
+  mergeRemote(session: Session, remote: { id: string; status?: 'added' | 'modified' | 'removed'; text?: string }[], filesBase?: string) {
+    for (const r of remote) {
+      const local = this.objects.find((o) => o.id === r.id)
+      if (local && local.sessionId !== session.id) continue
+      if (r.status === 'removed') {
+        if (!local || local.synced === undefined) continue
+        if (local.text === local.synced) this.#drop(local)
+        else {
+          local.synced = undefined // changed here: it stays, and the next save puts it back
+          this.#dirtyObjects.add(local.id)
+        }
+        continue
+      }
+      const theirs = r.text
+      if (theirs === undefined || session.deleted.some((d) => d.id === r.id)) continue
+      if (!local) {
+        const number = Math.max(0, ...this.objects.filter((o) => o.sessionId === session.id).map((o) => o.number)) + 1
+        this.objects.push({ id: r.id, number, text: theirs, updatedAt: Date.now(), sessionId: session.id, synced: theirs })
+        this.#dirtyObjects.add(r.id)
+        this.#importFiles(theirs, r.id, filesBase)
+        continue
+      }
+      if (local.synced === theirs) continue
+      const changedHere = local.synced === undefined ? local.text !== theirs : local.text !== local.synced
+      if (!changedHere) {
+        local.text = theirs
+      } else {
+        const merged = mergeObject(local.synced ?? theirs, local.text, theirs)
+        local.text = merged.text
+        const title = readField(merged.text, 'title')
+        const name = typeof title === 'string' && title ? `„${title}“` : ''
+        for (const { field, theirs: other } of merged.conflicts) {
+          this.#say('status', `${refer(local)}${name ? ` ${name}` : ''}: Das Feld „${FIELD_NAMES[field] ?? field}“ wurde hier und auf GitHub verschieden geändert. Ich habe deinen Wert behalten. Auf GitHub stand: ${show(other) || '(leer)'}`)
+        }
+        if (merged.taken.length > 0 && merged.conflicts.length === 0) this.#say('status', `${refer(local)}${name ? ` ${name}` : ''} wurde mit der Änderung von GitHub zusammengeführt.`)
+      }
+      local.synced = theirs
+      local.updatedAt = Date.now()
+      this.#dirtyObjects.add(local.id)
+      this.#importFiles(local.text, local.id, filesBase)
+    }
+    this.#schedule()
+  }
+
+  /** An object that is gone from the branch: out of the session, and its files with it. No deletion is queued, the branch has done it. */
+  #drop(object: ObjectRecord) {
+    this.objects = this.objects.filter((o) => o.id !== object.id)
+    this.#dirtyObjects.delete(object.id)
+    this.#removedObjects.add(object.id)
+    for (const file of this.files.filter((f) => f.objectId === object.id)) {
+      this.files = this.files.filter((f) => f.sha256 !== file.sha256)
+      this.#dirtyFiles.delete(file.sha256)
+      this.#removedFiles.add(file.sha256)
+      this.selection = this.selection.filter((sha) => sha !== file.sha256)
+      if (this.active === file.sha256) this.active = undefined
+    }
+    if (this.activeObjectId === object.id) this.activeObjectId = undefined
   }
 
   /** The preview of a restored file, from the bucket: its preview variant, or the file itself if it is an image that small. */
@@ -633,7 +750,7 @@ export class Workspace {
 
   /** Makes a fresh session if none is open, and shows it (`show`) or, at the start, only where nothing is shown yet. */
   #ensureOpen(show: boolean) {
-    if (this.sessions.some((s) => s.state === 'open')) return
+    if (this.sessions.some(mineOpen)) return
     const session = this.#add(defaultName(), 'open', true)
     if (show) this.selectSession(session.id)
     else {
@@ -1568,16 +1685,10 @@ export class Workspace {
       this.#syncAgain = true
       return false
     }
-    const work = this.sessions
-      .filter((s) => s.state !== 'merged')
-      .map((session) => ({
-        session,
-        todo: this.objects.filter((o) => o.sessionId === session.id && o.text !== o.synced).map((object) => ({ object, text: object.text })),
-        deleted: [...session.deleted],
-      }))
-      .filter((w) => w.todo.length > 0 || w.deleted.length > 0)
+    const pending = (session: Session) => this.objects.filter((o) => o.sessionId === session.id && o.text !== o.synced).map((object) => ({ object, text: object.text }))
+    const work = this.sessions.filter((s) => s.state !== 'merged' && (pending(s).length > 0 || s.deleted.length > 0))
     // A session with nothing left to save has nothing that failed (e.g. the change was undone).
-    this.failedSessions = this.failedSessions.filter((id) => work.some((w) => w.session.id === id))
+    this.failedSessions = this.failedSessions.filter((id) => work.some((session) => session.id === id))
     if (work.length === 0) {
       if (this.syncState === 'failed') this.syncState = 'idle'
       this.syncError = undefined
@@ -1589,12 +1700,24 @@ export class Workspace {
     let ok = false
     let failure: Error | undefined
     let signedOut = false
-    for (const { session, todo, deleted } of work) {
+    for (const session of work) {
       const started = Date.now()
+      let todo: { object: ObjectRecord; text: string }[] = []
+      let deleted: Removed[] = []
       this.savingSessions.push(session.id)
-      this.savingObjects.push(...todo.map(({ object }) => object.id))
       try {
-        const pull = await this.#backend.save(this.#ref(session), todo.map(({ object, text }) => ({ id: object.id, text, change: object.synced === undefined ? ('new' as const) : ('changed' as const) })), deleted)
+        // First what happened on the branch meanwhile (somebody else's changes, also those made on GitHub), so that nothing is overwritten.
+        if (session.pull) {
+          const seen = await this.#backend.review(session.pull, session.head)
+          if (!seen.unchanged) this.mergeRemote(session, seen.objects, seen.files)
+          session.head = seen.head
+        }
+        todo = pending(session)
+        deleted = [...session.deleted]
+        this.savingObjects.push(...todo.map(({ object }) => object.id))
+        if (todo.length === 0 && deleted.length === 0) continue
+        const { pull, head } = await this.#backend.save(this.#ref(session), todo.map(({ object, text }) => ({ id: object.id, text, change: object.synced === undefined ? ('new' as const) : ('changed' as const) })), deleted)
+        if (head) session.head = head
         for (const { object, text } of todo) {
           object.synced = text
           this.#dirtyObjects.add(object.id)
@@ -1677,6 +1800,23 @@ export class Workspace {
     } finally {
       this.submitting = false
     }
+  }
+
+  /** Takes over how GitHub sees the sessions that are here (somebody else may have submitted, returned or accepted one). */
+  align(list: RemoteErfassung[]) {
+    for (const session of this.sessions) {
+      const remote = session.pull === undefined ? undefined : list.find((e) => e.number === session.pull)
+      if (!remote) continue
+      const state: Session['state'] = remote.state === 'merged' ? 'merged' : remote.closed ? 'open' : remote.state === 'submitted' ? 'submitted' : 'open'
+      if (state === session.state) continue
+      session.state = state
+      if (remote.closed && remote.state !== 'merged') {
+        session.pull = undefined
+        session.url = undefined
+      }
+      this.#dirtySessions.add(session.id)
+    }
+    this.#schedule()
   }
 
   /** Looks at the pull requests that wait for review: an accepted session is final, a closed one is open again. */

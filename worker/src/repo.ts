@@ -51,9 +51,12 @@ export interface SessionRef {
   slug: string
   /** What the person calls the session; may change (it is part of the pull request's title). */
   name: string
+  /** The login the branch is named after, when the session was started by somebody else: everybody works on every session. */
+  owner?: string
 }
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+const LOGIN = /^[A-Za-z0-9-]{1,39}$/
 
 export function parseSessionRef(data: unknown): SessionRef | Failure {
   const slug = (data as { slug?: unknown } | null)?.slug
@@ -61,7 +64,9 @@ export function parseSessionRef(data: unknown): SessionRef | Failure {
   if (typeof slug !== 'string' || slug.length > 60 || !SLUG.test(slug)) return { error: 'A session needs a slug (a-z, 0-9, -).', status: 400 }
   const name = typeof raw === 'string' ? raw.replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) : ''
   if (!name) return { error: 'A session needs a name.', status: 400 }
-  return { slug, name }
+  const owner = (data as { owner?: unknown } | null)?.owner
+  if (owner !== undefined && (typeof owner !== 'string' || !LOGIN.test(owner))) return { error: 'An owner must be a login (A-Z, a-z, 0-9, -).', status: 400 }
+  return owner === undefined ? { slug, name } : { slug, name, owner }
 }
 
 export interface Saved {
@@ -375,7 +380,7 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
       const parsed = parseSave(data)
       if ('error' in parsed) return json({ error: parsed.error }, parsed.status)
       const { session, files, removals, notes, removedLabels } = parsed
-      const branch = branchOf(user.login, session.slug)
+      const branch = branchOf(session.owner ?? user.login, session.slug)
 
       // A submitted session can still be changed (also while it is being reviewed): its pull request is the same.
       const existing = await repo.current(branch)
@@ -387,7 +392,7 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
       const pull =
         existing ??
         (commit
-          ? await repo.draft(branch, titleOf(session.name, user.name), bodyOf(user.login, session)).catch((error) => {
+          ? await repo.draft(branch, titleOf(session.name, user.name), bodyOf(user.login, { slug: session.slug, name: session.name })).catch((error) => {
               console.error('Could not open the pull request', error)
               return undefined
             })
@@ -400,10 +405,12 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
       if (data instanceof Response) return data
       const session = parseSessionRef((data as { session?: unknown } | null)?.session)
       if ('error' in session) return json({ error: session.error }, session.status)
-      const branch = branchOf(user.login, session.slug)
-      const title = titleOf(session.name, user.name)
-      if (route === '/repo/submit') return json(await repo.submit(branch, title, bodyOf(user.login, session)))
-      return json({ pull: (await repo.rename(branch, title, bodyOf(user.login, session))) ?? null })
+      const author = session.owner ?? user.login
+      const branch = branchOf(author, session.slug)
+      const title = titleOf(session.name, session.owner ?? user.name)
+      const text = bodyOf(author, { slug: session.slug, name: session.name })
+      if (route === '/repo/submit') return json(await repo.submit(branch, title, text))
+      return json({ pull: (await repo.rename(branch, title, text)) ?? null })
     }
 
     if ((route === '/repo/merge' || route === '/repo/close') && request.method === 'POST') {
@@ -478,7 +485,8 @@ export async function handleRepo(request: Request, route: string, user: Auth, en
         objects: objectsOf(files),
         pull: { number: pull.number, url: pull.html_url, state: pull.state, merged: pull.merged, draft: pull.draft === true },
         mergeable: pull.mergeable,
-        checks: await repo.checks(head),
+        // `light` (for a look at the objects only, e.g. before a save) leaves out the checks: they cost more calls.
+        checks: new URL(request.url).searchParams.has('light') ? 'unknown' : await repo.checks(head),
       })
     }
   } catch (error) {

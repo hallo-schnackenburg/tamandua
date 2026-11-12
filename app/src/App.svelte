@@ -18,6 +18,8 @@
   // With a Worker the app is real: the model answers and files go to the bucket. Without one, stand-ins.
   const workerUrl = import.meta.env.VITE_WORKER_URL
   const backend = workerUrl ? new HttpBackend(workerUrl) : new FakeBackend()
+  // For tests in a browser: the stand-in can be filled from outside.
+  if (import.meta.env.DEV && backend instanceof FakeBackend) (window as unknown as { __fake: FakeBackend }).__fake = backend
   const ws = new Workspace(workerUrl ? new S3Store(workerUrl) : new FakeStore(), workerUrl ? new WorkerAgent(workerUrl) : new FakeAgent(), backend)
   const archive = new ArchiveDb(backend.archive, workerUrl ? liveUrl(workerUrl, location.href) : undefined)
   const review = new ReviewDb(backend, archive, () => (ws.login.state === 'user' ? ws.login.user.login.replace(/[^A-Za-z0-9-]/g, '-') : undefined), { load: loadReview, save: saveReview }) // (as the branch name has it)
@@ -46,8 +48,8 @@
     { id: 'sessions', label: 'Erfassungen' },
   ]
   let tab = $state<Tab>(readTab())
-  /** In the sessions: whether the chosen one is one of this person's (worked on in place) or somebody else's (read and discussed). */
-  let mode = $state<'own' | 'other'>('own')
+  /** In the sessions: whether the chosen one is worked on in place ('work') or only read (accepted or closed ones, or none chosen). */
+  let view = $state<'work' | 'read'>('work')
   function readTab(): Tab {
     try {
       return localStorage.getItem('tamandua.tab') === 'database' ? 'database' : 'sessions'
@@ -84,14 +86,14 @@
       archive.groupId = route.group
     } else if (route.tab === 'review') {
       show('sessions')
-      // The pull request of one's own session is worked on in place.
+      // A session that is here is worked on in place; one that is not is taken over by the list as soon as it is shown.
       const own = route.pull === undefined ? undefined : ws.sessions.find((s) => s.pull === route.pull)
       if (own) ws.selectSession(own.id)
-      mode = own ? 'own' : 'other'
+      view = own ? 'work' : 'read'
       void review.select(route.pull, route.id)
     } else {
       show('sessions')
-      mode = 'own'
+      view = 'work'
       if (route.session && route.session !== ws.currentId) {
         if (ws.sessions.some((s) => s.id === route.session)) {
           ws.selectSession(route.session)
@@ -115,7 +117,7 @@
   const current = $derived<Route>(
     tab === 'database'
       ? { tab, id: archive.selectedId, group: archive.groupId }
-      : mode === 'own'
+      : view === 'work' && !ws.current?.owner
         ? { tab: 'capture', session: ws.currentId }
         : { tab: 'review', pull: review.selectedPull, id: review.selectedId },
   )
@@ -238,7 +240,7 @@
 
     {#if tab === 'database'}<Database {archive} filesBase={ws.filesBase} />{/if}
     <!-- Kept alive behind the other tab: the chat and the files stay as they are. -->
-    <div class="sessions" class:gone={tab !== 'sessions'}><Erfassungen {ws} {review} filesBase={ws.filesBase} bind:mode /></div>
+    <div class="sessions" class:gone={tab !== 'sessions'}><Erfassungen {ws} {review} filesBase={ws.filesBase} bind:view /></div>
   {:else if ws.login.state === 'loading'}
     <div class="welcome"><p class="quiet">Einen Moment …</p></div>
   {:else}

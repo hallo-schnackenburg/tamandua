@@ -35,6 +35,16 @@ describe('POST /repo/save', () => {
     expect(gh.state.calls.every((c) => c.auth === 'Bearer ghu_anna')).toBe(true)
   })
 
+  it('saves to the branch of the owner when the session was started by somebody else', async () => {
+    const gh = fakeGitHub()
+    const response = await saveOf(gh, { ...objects(ID_A), session: { ...session, owner: 'bernd' } })
+    expect(response.status).toBe(200)
+    expect(Object.keys(gh.state.refs).sort()).toEqual(['erfassung/bernd/dachbodenfund-postkarten-4k2x', 'main'])
+    // The marker in the pull request does not carry the owner: it is the branch that says whose session it is.
+    expect(gh.state.pulls[0].body).not.toContain('bernd"')
+    expect((await saveOf(gh, { ...objects(ID_A), session: { ...session, owner: 'a/../b' } })).status).toBe(400)
+  })
+
   it('keeps sessions apart: every session has its own branch', async () => {
     const gh = fakeGitHub()
     await saveOf(gh, objects(ID_A))

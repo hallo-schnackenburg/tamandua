@@ -54,6 +54,8 @@ export interface Review {
   checks: Checks
   /** What the session does with each object; the text is the one of the session (none for a removed object). */
   objects: { id: string; status: 'added' | 'modified' | 'removed'; text?: string }[]
+  /** The commit that was asked about (`since`) is still the head: nothing was read, `objects` is empty. */
+  unchanged?: true
 }
 
 /** A comment on a session. */
@@ -84,6 +86,14 @@ export interface RemoteContent {
 export interface SessionRef {
   slug: string
   name: string
+  /** The login the branch is named after, if the session was started by somebody else. */
+  owner?: string
+}
+
+/** What a save leaves behind: the session's pull request (if there is one) and the branch's new commit (if anything changed). */
+export interface SaveResult {
+  pull?: Pull
+  head?: string
 }
 
 /** An object as it is sent: whether the branch has it already decides the mark in the commit message. */
@@ -106,7 +116,7 @@ export interface Backend {
    * Puts the objects (id and YAML text) into one commit on the session's branch and removes the deleted
    * ones from it. Returns the pull request of the session, if there is one.
    */
-  save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<Pull | undefined>
+  save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<SaveResult>
   /** Marks the pull request of the session as ready for review. */
   submit(session: SessionRef): Promise<Pull>
   /** Gives the pull request of the session its new name, if it has one. */
@@ -117,7 +127,7 @@ export interface Backend {
   /** The objects of one session, with their text. */
   erfassung(number: number): Promise<RemoteContent>
   /** A session as it is looked at for review. */
-  review(number: number): Promise<Review>
+  review(number: number, since?: string): Promise<Review>
   /** Accepts a submitted session (`head`: the commit that was looked at; if it changed since, this fails). */
   merge(number: number, head: string): Promise<Pull>
   /** Closes a submitted session without accepting it. */
@@ -178,19 +188,21 @@ export class HttpBackend implements Backend {
     return (await response.json()) as User
   }
 
-  async save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<Pull | undefined> {
+  async save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<SaveResult> {
     let pull: Pull | undefined
+    let head: string | undefined
     for (let o = 0, d = 0; o < objects.length || d < deleted.length; o += MAX_PER_SAVE, d += MAX_PER_SAVE) {
       const response = await request(`${this.#url}/repo/save`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ session, objects: objects.slice(o, o + MAX_PER_SAVE), deleted: deleted.slice(d, d + MAX_PER_SAVE) }),
       })
-      const data = await jsonOf<{ pull?: Pull }>(response)
+      const data = await jsonOf<{ pull?: Pull; commit?: string | null }>(response)
       if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
       pull = data.pull ?? pull
+      head = data.commit ?? head
     }
-    return pull
+    return { pull, head }
   }
 
   async submit(session: SessionRef): Promise<Pull> {
@@ -235,10 +247,11 @@ export class HttpBackend implements Backend {
     return { head: data.head, files: data.files, objects: await readTexts(data.raw, data.objects.filter((o) => o.status !== 'removed')) }
   }
 
-  async review(number: number): Promise<Review> {
-    const response = await request(`${this.#url}/repo/erfassung/${number}`)
+  async review(number: number, since?: string): Promise<Review> {
+    const response = await request(`${this.#url}/repo/erfassung/${number}${since ? '?light' : ''}`)
     const data = await jsonOf<Omit<Review, 'objects'> & { raw: string; objects: { id: string; path: string; status: Review['objects'][number]['status'] }[] }>(response)
     if (!response.ok) throw new Error(data.error ?? `Fehler ${response.status}`)
+    if (since && data.head === since) return { head: data.head, files: data.files, pull: data.pull, mergeable: data.mergeable, checks: data.checks, objects: [], unchanged: true }
     const texts = new Map((await readTexts(data.raw, data.objects.filter((o) => o.status !== 'removed'))).map((o) => [o.id, o.text]))
     return {
       head: data.head,
@@ -360,7 +373,12 @@ export class FakeBackend implements Backend {
     return this.#signedIn ? { login: 'test', name: 'Test Person', avatar: '', role: 'write' } : undefined
   }
 
-  async save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<Pull | undefined> {
+  /** The commit of each branch; it changes with every save. */
+  heads = new Map<string, number>()
+  /** Whose branch a session is, when it is not the signed-in person's (for tests of sessions that somebody else started). */
+  owners = new Map<string, string>()
+
+  async save(session: SessionRef, objects: SavedObject[], deleted: Removed[]): Promise<SaveResult> {
     await sleep(150)
     if (objects.some((o) => /failsave/.test(o.text))) throw new Error('Speichern fehlgeschlagen (Test).')
     if (this.closed) {
@@ -371,9 +389,11 @@ export class FakeBackend implements Backend {
     const branch = this.branches.get(session.slug) ?? new Map<string, string>()
     this.branches.set(session.slug, branch)
     this.names.set(session.slug, session.name)
+    if (session.owner) this.owners.set(session.slug, session.owner)
     for (const o of objects) branch.set(o.id, o.text)
     for (const { id } of deleted) branch.delete(id)
-    return branch.size > 0 || objects.length > 0 ? this.#pullOf(session.slug) : undefined
+    this.heads.set(session.slug, (this.heads.get(session.slug) ?? 0) + 1)
+    return { pull: branch.size > 0 || objects.length > 0 ? this.#pullOf(session.slug) : undefined, head: `fake-${this.heads.get(session.slug)}` }
   }
 
   async submit(session: SessionRef): Promise<Pull> {
@@ -395,25 +415,27 @@ export class FakeBackend implements Backend {
       ...this.#pullOf(slug),
       state: this.submitted.has(slug) ? ('submitted' as const) : ('open' as const),
       closed: false,
-      login: 'test',
+      login: this.owners.get(slug) ?? 'test',
       slug,
       name: this.names.get(slug) ?? slug,
       createdAt: new Date().toISOString(),
-      head: 'fake',
+      head: `fake-${this.heads.get(slug) ?? 0}`,
     }))
   }
 
   async erfassung(number: number): Promise<RemoteContent> {
     const slug = [...this.branches.keys()].find((s) => this.#pullOf(s).number === number)
     const branch = slug ? this.branches.get(slug) : undefined
-    return { head: 'fake', objects: [...(branch ?? [])].map(([id, text]) => ({ id, text })).sort((a, b) => a.id.localeCompare(b.id)) }
+    return { head: `fake-${this.heads.get(slug ?? '') ?? 0}`, objects: [...(branch ?? [])].map(([id, text]) => ({ id, text })).sort((a, b) => a.id.localeCompare(b.id)) }
   }
 
-  async review(number: number): Promise<Review> {
+  async review(number: number, since?: string): Promise<Review> {
     const content = await this.erfassung(number)
     const slug = [...this.branches.keys()].find((s) => this.#pullOf(s).number === number)
+    const head = `fake-${this.heads.get(slug ?? '') ?? 0}`
+    if (since && since === head) return { head, pull: this.#pullOf(slug ?? ''), mergeable: true, checks: 'unknown', objects: [], unchanged: true }
     return {
-      head: content.head,
+      head,
       pull: { ...this.#pullOf(slug ?? ''), merged: this.merged, state: this.merged || this.closed ? 'closed' : 'open' },
       mergeable: true,
       checks: 'none',

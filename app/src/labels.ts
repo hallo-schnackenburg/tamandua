@@ -1,53 +1,8 @@
-// What the user sees: German names and the color of an object. The keys (types,
-// subtypes, fields) are English and come from archive.yaml and the schema.
+// What the user sees of an object's kind and place. The keys (types, subtypes, fields) are English and come from archive.yaml.
 
-export const SUBTYPE_NAMES: Record<string, string> = {
-  photo: 'Foto',
-  drawing: 'Zeichnung',
-  print: 'Druckgrafik',
-  plan: 'Karte / Plan',
-  letter: 'Brief',
-  protocol: 'Protokoll',
-  note: 'Notiz',
-  brochure: 'Broschüre',
-  album: 'Album',
-  collection: 'Sammlung',
-}
-
-export const TYPE_NAMES: Record<string, string> = { image: 'Bild', document: 'Dokument', group: 'Gruppe' }
-
-export const FIELD_NAMES: Record<string, string> = {
-  title: 'Titel',
-  date: 'Datum',
-  subtype: 'Untertyp',
-  origin: 'Herkunft',
-  original: 'Original',
-  holder: 'Aufbewahrung',
-  reference: 'Signatur',
-  parents: 'Gehört zu',
-  members: 'Enthält',
-  owner: 'Eigentümer',
-  subjects: 'Bezüge',
-  recipient: 'Empfänger',
-  location: 'Ort',
-  geocode: 'Koordinaten',
-  description: 'Beschreibung',
-  notes: 'Notizen',
-  language: 'Sprache',
-  storage: 'Ablage',
-  external: 'Externe Fundstelle',
-}
-
-export const ENTITY_NAMES: Record<string, string> = {
-  person: 'Person',
-  place: 'Ort',
-  building: 'Gebäude',
-  business: 'Betrieb',
-  event: 'Ereignis',
-  thing: 'Sache',
-}
-
-export const EXTERNAL_NAMES: Record<string, string> = { archive: 'Archiv', platform: 'Plattform', website: 'Webseite' }
+// The German names come from archive.yaml (generated into core).
+export { ENTITY_NAMES, EXTERNAL_NAMES, FIELD_NAMES, SUBTYPE_NAMES, TYPE_NAMES } from '@tamandua/core/archive'
+import { SUBTYPE_NAMES, TYPE_NAMES } from '@tamandua/core/archive'
 
 /** Where an object that lives elsewhere can be found: the name of the first place, else its host. */
 export function placeOf(list: unknown): string {

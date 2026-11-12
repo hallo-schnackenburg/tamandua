@@ -39,6 +39,11 @@ describe('buildModelRequest', () => {
     expect(built.system).toContain('building')
   })
 
+  it('names the fields to fill in from archive.yaml', () => {
+    const { system } = buildModelRequest(request(), 'm')
+    expect(system).toContain('Fields (YAML keys, in English): title, description, date, location, origin, original, owner, subjects, notes; documents also recipient and language (e.g. "de").')
+  })
+
   it("tells the model today's date in the archive's time zone", () => {
     // 23:30 UTC on 8 November is already 9 November in Schnackenburg
     const built = buildModelRequest(request(), 'm', new Date('2026-11-08T23:30:00Z'))

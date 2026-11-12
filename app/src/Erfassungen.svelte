@@ -13,9 +13,10 @@
   import type { Checks } from './backend.js'
 
   // The sessions of everybody in one place. Left: the sessions (the chosen one opens up with what can be done with it), under them the chat.
-  // Middle: the objects of the chosen session. Right: its files and the talk about it (tabs). The sessions of this person are worked
-  // on right here (objects, files, chat); the other ones are read and discussed, working on them follows.
-  let { ws, review, filesBase, mode = $bindable('own') }: { ws: Workspace; review: ReviewDb; filesBase?: string; mode?: 'own' | 'other' } = $props()
+  // Middle: the objects of the chosen session. Right: its files and the talk about it (tabs). Every session that can still change is
+  // worked on right here, whoever started it: one of somebody else is taken over on the first click (`ws.adopt`). Only what is accepted
+  // or closed is read (`view` is 'read').
+  let { ws, review, filesBase, view = $bindable('work') }: { ws: Workspace; review: ReviewDb; filesBase?: string; view?: 'work' | 'read' } = $props()
 
   const FILTERS: { id: Filter; label: string }[] = [
     { id: 'waiting', label: 'Eingereicht' },
@@ -84,7 +85,7 @@
   // --- the choice ---
   /** Whether the chosen session is open in the list (with what can be done with it); a second click on it closes it. */
   let unfolded = $state(true)
-  const isCurrent = (row: Row): boolean => (row.session ? mode === 'own' && ws.currentId === row.session.id : mode === 'other' && review.selectedPull === row.pull)
+  const isCurrent = (row: Row): boolean => (row.session ? view === 'work' && ws.currentId === row.session.id : view === 'read' && review.selectedPull === row.pull)
 
   function choose(row: Row) {
     if (isCurrent(row)) {
@@ -94,8 +95,8 @@
     unfolded = true
     if (row.session) {
       ws.selectSession(row.session.id)
-      mode = 'own'
-    } else mode = 'other'
+      view = 'work'
+    } else view = 'read'
     void review.select(row.pull)
   }
 
@@ -103,7 +104,7 @@
   function showPart(part: Filter) {
     if (review.filter === part) return
     review.filter = part
-    mode = 'other'
+    view = 'read'
     void review.select(undefined)
   }
 
@@ -112,22 +113,46 @@
     void ws.shown.length
     void ws.currentId
     untrack(() => {
-      if (mode === 'other' && review.selectedPull === undefined) mode = 'own'
+      if (view === 'read' && review.selectedPull === undefined) view = 'work'
     })
   })
 
   // The talk and the objects of the review follow the session that is worked on (also when it is changed elsewhere, or when its pull request appears).
   $effect(() => {
-    if (mode !== 'own') return
+    if (view !== 'work') return
     const wanted = ws.current?.pull
     untrack(() => {
       if (wanted !== review.selectedPull) void review.select(wanted)
     })
   })
 
+  // What GitHub says about the sessions that are here (submitted, returned or accepted by somebody) is taken over.
+  $effect(() => {
+    const list = review.list
+    untrack(() => ws.align(list))
+  })
+
+  // A session of somebody else that is chosen (by a click, or by the address) and not here yet is taken over, so that it can be worked on.
+  const tried = new Set<number>()
+  $effect(() => {
+    const number = review.selectedPull
+    if (number === undefined || view !== 'read') return
+    const remote = review.list.find((e) => e.number === number)
+    untrack(() => {
+      if (!remote || remote.closed || remote.state === 'merged' || tried.has(number) || ws.sessions.some((s) => s.pull === number)) return
+      tried.add(number)
+      void ws.adopt(remote).then((session) => {
+        if (session && review.selectedPull === number) {
+          ws.selectSession(session.id)
+          view = 'work'
+        }
+      })
+    })
+  })
+
   // The list shows the part the session that is worked on is in, so that it is always to be seen.
   $effect(() => {
-    const session = mode === 'own' ? ws.current : undefined
+    const session = view === 'work' ? ws.current : undefined
     if (!session) return
     const category = categoryOf(session.state === 'merged' ? 'merged' : session.state === 'submitted' ? 'submitted' : 'draft')
     untrack(() => {
@@ -135,9 +160,9 @@
     })
   })
 
-  const own = $derived(mode === 'own' ? ws.current : undefined)
-  /** The objects of the own session are worked on in place; other sessions (and the ones taken over) are read. */
-  const working = $derived(mode === 'own' && ws.current?.state !== 'merged')
+  const own = $derived(view === 'work' ? ws.current : undefined)
+  /** The objects of a session that can still change are worked on in place; the others (accepted, closed) are read. */
+  const working = $derived(view === 'work' && ws.current?.state !== 'merged')
 
   // --- a new session, a new name, handing in ---
   let creating = $state(false)
@@ -150,7 +175,7 @@
     creating = false
     newName = ''
     unfolded = true
-    mode = 'own'
+    view = 'work'
     void review.select(session.pull)
   }
   function rename() {
@@ -165,11 +190,11 @@
   // --- the right column ---
   let tab = $state<'files' | 'comments'>('files')
   $effect(() => {
-    if (mode === 'other') tab = 'comments'
+    if (view === 'read') tab = 'comments'
   })
   /** Files carried over the comments: the files are shown, so that they can be dropped there. */
   function fileOver(event: DragEvent) {
-    if (tab === 'comments' && mode === 'own' && event.dataTransfer?.types.includes('Files')) tab = 'files'
+    if (tab === 'comments' && view === 'work' && event.dataTransfer?.types.includes('Files')) tab = 'files'
   }
   function pick(event: Event) {
     const input = event.currentTarget as HTMLInputElement
@@ -424,7 +449,7 @@
       <button role="tab" class:active={tab === 'comments'} aria-selected={tab === 'comments'} onclick={() => (tab = 'comments')}>
         Kommentare{#if review.comments.length > 0}<span class="n">{review.comments.length}</span>{/if}
       </button>
-      {#if tab === 'files' && mode === 'own'}
+      {#if tab === 'files' && view === 'work'}
         {#if ws.progress}
           <span class="progress" role="status"><span class="spinner" aria-hidden="true"></span>{ws.progress.done} von {ws.progress.total}</span>
         {/if}
@@ -435,13 +460,13 @@
       {/if}
     </div>
     {#if tab === 'files'}
-      {#if mode === 'own'}
+      {#if view === 'work'}
         <Files workspace={ws} />
       {:else}
-        <p class="quiet center">Dateien lassen sich bisher nur bei den eigenen Erfassungen ergänzen.</p>
+        <p class="quiet center">{review.selectedPull === undefined ? 'Wähle links eine Erfassung.' : 'Bei übernommenen Erfassungen gibt es hier keine Dateien.'}</p>
       {/if}
     {:else if review.selectedPull === undefined}
-      <p class="quiet center">{mode === 'own' && ws.current ? 'Kommentare gibt es, sobald die Erfassung bei GitHub ist, nach dem ersten gespeicherten Objekt.' : 'Wähle links eine Erfassung.'}</p>
+      <p class="quiet center">{view === 'work' && ws.current ? 'Kommentare gibt es, sobald die Erfassung bei GitHub ist, nach dem ersten gespeicherten Objekt.' : 'Wähle links eine Erfassung.'}</p>
     {:else}
       <div class="comments" role="log" aria-label="Kommentare">
         {#if review.commentsState === 'failed'}

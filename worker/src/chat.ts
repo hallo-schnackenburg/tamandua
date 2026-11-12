@@ -1,7 +1,7 @@
 // The chat request to the model: what we send, and how the answer becomes tool calls.
 // Nothing here touches the network, so it can be tested on its own.
 
-import { ENTITY_TYPES, EXTERNAL_TYPES, OBJECT_TYPES, type ObjectType } from '@tamandua/core/archive'
+import { CAPTURE_FIELDS, ENTITY_TYPES, EXTERNAL_TYPES, OBJECT_TYPES, type CaptureField, type ObjectType } from '@tamandua/core/archive'
 
 /** What the browser sends. The YAML texts come without the `files` list (hashes are noise for the model). */
 export interface ChatRequest {
@@ -77,6 +77,13 @@ const TYPE_LIST = Object.entries(OBJECT_TYPES)
   .join(', ')
 const SUBTYPES = [...new Set(Object.entries(OBJECT_TYPES).filter(([type]) => type !== 'group').flatMap(([, subtypes]) => subtypes))]
 
+/** The fields of every object, and those of a type only ("documents also recipient and language (e.g. "de")"), as the prompt names them. */
+const named = (fields: CaptureField[]): string => fields.map(({ name, hint }) => (hint ? `${name} (${hint})` : name)).join(' and ')
+const FIELD_LIST = [
+  CAPTURE_FIELDS.common.map((f) => f.name).join(', '),
+  ...Object.entries(CAPTURE_FIELDS.types).map(([type, fields]) => `${type}s also ${named(fields)}`),
+].join('; ')
+
 export const SYSTEM_PROMPT = `You help volunteers of a town archive (Stadtarchiv Schnackenburg) to describe scanned images and documents.
 For every message you answer ONLY by calling tools. The app carries them out; you never change anything yourself.
 
@@ -91,7 +98,7 @@ Tools:
 - geocode: look up the coordinates of a place on the map. The app sets the result and tells the user, so do not repeat it. Use it only when the user asks for coordinates or the exact position.
 - say: answer or ask a short question. Use it when something is unclear, when the user asks something, or in addition to other calls if you must point something out. The app itself confirms every object created and every field set, so do not repeat that; say something only for assumptions, hints or questions.
 
-Fields (YAML keys, in English): title, description, date, location, origin, original, owner, subjects, notes; documents also recipient and language (e.g. "de").
+Fields (YAML keys, in English): ${FIELD_LIST}.
 - date is EDTF text: "1965", "1965-01", "1965-01-03", "196X" (decade), "1960/1969" (range), a trailing "?" for uncertain, "~" for approximate. Always as text.
 - location is the place the object relates to for the archive, shown on the map: where a photo was taken, where a shown thing stands today. Free text, e.g. "Schnackenburg, Marktplatz".
 - origin is who made the object and where, as an object {name, type, location}: for a photo the photographer and the place, for a letter the sender and the place, for a brochure the company and its seat. Example: {"name": "Max Ketterer", "type": "business", "location": "Leipzig-Reudnitz"}. It is not where the object was found; put that into notes.

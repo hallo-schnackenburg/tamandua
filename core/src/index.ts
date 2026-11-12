@@ -14,6 +14,8 @@ export { SNAPSHOT_BRANCH, SNAPSHOT_FILE, parseSnapshotHeader, parseSnapshotLine,
 export type { SnapshotHeader, SnapshotRecord } from './snapshot.js'
 export { addFile, removeFile, setField } from './yaml/patch.js'
 export type { FileEntry, SetFieldResult } from './yaml/patch.js'
+export { mergeObject } from './yaml/merge.js'
+export type { Conflict, Merged } from './yaml/merge.js'
 export { readField, readObject, readValue, stripFiles } from './yaml/read.js'
 export { ENTITY_TYPES, EXTERNAL_TYPES, OBJECT_TYPES } from './archive.generated.js'
 export type { ObjectType } from './archive.generated.js'

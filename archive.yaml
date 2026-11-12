@@ -1,30 +1,429 @@
+# The model of the archive: the single source for the schema, the lists of types and the German names.
+# `npm run generate` in core turns it into core/schema/object.schema.json and core/src/archive.generated.ts
+# (the app, the worker and the checks read those). Change the model here, then generate; a test notices if you forget.
+#
+# object_types   the kinds of objects, each with its subtypes (key: German name), the rule for its files, and the
+#                fields only it has.
+# entity_types   what the people, places, ... in `origin`, `subjects` and `holder` can be.
+# external_types  what kind of place an `external` entry points to (the content lives there instead of in our store):
+#                  archive: archive, library, museum with catalogue entries; platform: video, photo or audio platform;
+#                  website: any other web page.
+# fields         the fields every object can have, in the order of the schema. `label` is the German name shown to people,
+#                `required` makes it mandatory, `capture` says that the person (and the chat) fills it in while capturing,
+#                `schema` is the JSON Schema of its value (a `$ref` points to an entry of `defs`).
+# defs           the building blocks the fields are made of (JSON Schema, written as YAML); a `label` in a property names it for people.
+
+schema:
+  id: https://example.invalid/schema/object.schema.json
+  title: Archive object
+  description: Metadata of one archive object (an image, a document, ...). One YAML file per object. Files
+    (scans, videos, OCR text, ...) live in the object store and are described in YAML files.
 object_types:
   image:
-    - photo
-    - drawing
-    - print
-    - plan
+    label: Bild
+    subtypes:
+      photo: Foto
+      drawing: Zeichnung
+      print: Druckgrafik
+      plan: Karte / Plan
+    files:
+      role: main
+      max: 1
+      description: Exactly one file with the role 'main'.
   document:
-    - letter
-    - note
-    - protocol
-    - brochure
-  # A group holds other objects (the objects point to it with "parents"): it has a description of its own, but no files.
+    label: Dokument
+    subtypes:
+      letter: Brief
+      note: Notiz
+      protocol: Protokoll
+      brochure: Broschüre
+    files:
+      role: page
+      numbered: true
+      description: One or more pages. 'num' gives the order and must be unique (checked in CI, not expressible
+        here).
+    fields:
+      recipient:
+        label: Empfänger
+        capture: true
+        schema:
+          type: string
+      language:
+        label: Sprache
+        capture: true
+        hint: e.g. "de"
+        schema:
+          description: ISO 639-1 code, e.g. 'de'.
+          type: string
+          pattern: ^[a-z]{2,3}$
   group:
-    - album
-    - collection
-
+    label: Gruppe
+    description: A group of objects (an album, a collection, ...). It is described like any object (title,
+      date, origin, original, ...) but has no files and no storage of its own.
+    subtypes:
+      album: Album
+      collection: Sammlung
+    files: false
 entity_types:
-  - person
-  - business
-  - building
-  - place
-  - thing
-  - event
-
-# What kind of place an entry of "external" points to: where the content of an object lives
-# when it is not in our own store.
+  person: Person
+  place: Ort
+  building: Gebäude
+  business: Betrieb
+  event: Ereignis
+  thing: Sache
 external_types:
-  - archive    # archive, library, museum: catalogue entries, often with a call number
-  - platform   # video, photo or audio platform
-  - website    # any other web page
+  archive: Archiv
+  platform: Plattform
+  website: Webseite
+virtual_fields:
+  members: Enthält
+fields:
+  id:
+    required: true
+    schema:
+      description: 'ULID. Stable and meaningless: never derived from file names or call numbers.'
+      $ref: '#/$defs/ulid'
+  parents:
+    label: Gehört zu
+    schema:
+      description: 'The groups (album, collection, ...) this object belongs to; an object can be in several.
+        Only this side is written: the group does not list its members. A group can be in groups too,
+        but not in itself, not through others (checked in CI, not expressible here).'
+      type: array
+      minItems: 1
+      uniqueItems: true
+      items:
+        $ref: '#/$defs/ulid'
+  type:
+    required: true
+    schema:
+      description: Object type. Decides which further fields and which files are allowed.
+  subtype:
+    label: Untertyp
+    schema:
+      description: Optional refinement of the type, e.g. photo or letter. The values are listed in archive.yaml.
+      type: string
+      minLength: 1
+  title:
+    label: Titel
+    required: true
+    capture: true
+    schema:
+      type: string
+      minLength: 1
+  description:
+    label: Beschreibung
+    capture: true
+    schema:
+      type: string
+  date:
+    label: Datum
+    capture: true
+    schema:
+      $ref: '#/$defs/date'
+  location:
+    label: Ort
+    capture: true
+    schema:
+      description: 'The place the object relates to for the archive, as free text: where a photo was taken,
+        where something shown stands. This is the place on the map.'
+      type: string
+  geocode:
+    label: Koordinaten
+    schema:
+      $ref: '#/$defs/geocode'
+  origin:
+    label: Herkunft
+    capture: true
+    schema:
+      description: 'Who made the object and where: the photographer and the place of a photo, the sender
+        and the place of a letter, the company and its seat on a brochure. Not where it was found.'
+      $ref: '#/$defs/entity'
+  original:
+    label: Original
+    capture: true
+    schema:
+      description: 'Where the original is, if there is one (there is only one): who has it now, and under
+        which call number.'
+      $ref: '#/$defs/original'
+  owner:
+    label: Eigentümer
+    capture: true
+    schema:
+      description: Who the original belongs to, e.g. when that differs from the holder (loan, deposit).
+      $ref: '#/$defs/entity'
+  subjects:
+    label: Bezüge
+    capture: true
+    schema:
+      description: 'The things the object shows or mentions: people, places, buildings, businesses, events,
+        things.'
+      type: array
+      items:
+        $ref: '#/$defs/entity'
+  notes:
+    label: Notizen
+    capture: true
+    schema:
+      description: Internal notes of the person capturing the object.
+      type: string
+  storage:
+    label: Ablage
+    schema:
+      description: 'Where the content of the object lives: ''local'' (default, in our object store, described
+        by files) or ''external'' (somewhere else, described by external).'
+      enum:
+      - local
+      - external
+  external:
+    label: Externe Fundstelle
+    schema:
+      description: 'Where the content is, if it is not here (storage: external). One entry per place.'
+      type: array
+      minItems: 1
+      items:
+        $ref: '#/$defs/external_entry'
+  files:
+    schema:
+      type: array
+defs:
+  stored_elsewhere:
+    description: 'The content lives somewhere else (storage: external). Files are optional and only accompany
+      it, e.g. a thumbnail or a screenshot of the page; they are not the object.'
+    required:
+    - external
+    properties:
+      files:
+        items:
+          allOf:
+          - $ref: '#/$defs/file'
+          - properties:
+              role:
+                enum:
+                - thumbnail
+                - screenshot
+  external_entry:
+    description: One place outside of our store where the content can be found. Everything is optional
+      (the address may not be known yet), but an entry says at least something.
+    type: object
+    minProperties: 1
+    properties:
+      type:
+        description: What kind of place it is, e.g. archive or platform. The values are listed in archive.yaml.
+        type: string
+        minLength: 1
+      site:
+        description: Name of the archive or platform, e.g. Arcinsys, YouTube.
+        type: string
+        minLength: 1
+      uri:
+        description: Link to the object or to its catalogue entry.
+        type: string
+        pattern: ^https?://\S+$
+      reference:
+        description: Call number or id at that place.
+        type: string
+        minLength: 1
+      note:
+        description: Free text about this place, e.g. where in it to look.
+        type: string
+        minLength: 1
+      retrieved:
+        description: The day somebody last saw the content there (YYYY-MM-DD).
+        type: string
+        format: date
+    additionalProperties: false
+  original:
+    description: The one place where the original is kept. Everything is optional, but an entry says at
+      least something.
+    type: object
+    minProperties: 1
+    properties:
+      holder:
+        label: Aufbewahrung
+        description: 'Who has the original now and where: the town archive, a family, a collector, a gallery.
+          Possession, not ownership.'
+        $ref: '#/$defs/entity'
+      reference:
+        label: Signatur
+        description: Call number (Signatur) at the holder.
+        type: string
+        minLength: 1
+      uri:
+        description: Link to the holder's catalogue entry.
+        type: string
+        pattern: ^https?://\S+$
+      note:
+        description: Free text, e.g. shelf or box.
+        type: string
+        minLength: 1
+    additionalProperties: false
+  entity:
+    description: A person, place, building, business, event or thing. The values of type are listed in
+      archive.yaml.
+    type: object
+    required:
+    - name
+    properties:
+      name:
+        type: string
+        minLength: 1
+      type:
+        type: string
+        minLength: 1
+      note:
+        type: string
+      location:
+        description: Place as free text.
+        type: string
+      geocode:
+        $ref: '#/$defs/geocode'
+    additionalProperties: false
+  geocode:
+    type: object
+    required:
+    - lat
+    - lon
+    - precision
+    properties:
+      lat:
+        type: number
+        minimum: -90
+        maximum: 90
+      lon:
+        type: number
+        minimum: -180
+        maximum: 180
+      precision:
+        description: How exact the point is.
+        enum:
+        - exact
+        - street
+        - town
+        - region
+      source:
+        description: Where the point comes from, e.g. osm (OpenStreetMap).
+        type: string
+    additionalProperties: false
+  file:
+    description: An original file in the object store, e.g. a scan.
+    type: object
+    required:
+    - role
+    - path
+    - sha256
+    - mime
+    - bytes
+    properties:
+      role:
+        description: Role of the file within the object (restricted per type).
+        type: string
+      num:
+        description: Position, for multi-part objects.
+        type: integer
+        minimum: 1
+      original_name:
+        description: The name the file had when it was captured (e.g. the scanner's or camera's file name),
+          kept to trace it back.
+        type: string
+        minLength: 1
+      path:
+        description: 'Path in the object store, relative to the store root: files/<sha[0,2]>/<sha[2,2]>/<sha>/original.<ext>.
+          Must match sha256 (checked by checkConsistency).'
+        type: string
+        pattern: ^files/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}/original\.[a-z0-9]+$
+      sha256:
+        $ref: '#/$defs/sha256'
+      mime:
+        type: string
+        pattern: ^[a-z]+/[a-z0-9.+-]+$
+      bytes:
+        type: integer
+        minimum: 1
+      width:
+        type: integer
+        minimum: 1
+      height:
+        type: integer
+        minimum: 1
+      duration_seconds:
+        type: number
+        exclusiveMinimum: 0
+      captured_at:
+        description: Capture time from the file's own metadata (EXIF), if present. Not the date of the
+          depicted event.
+        type:
+        - string
+        - 'null'
+        format: date-time
+      variants:
+        description: 'Derived files: previews, other sizes, OCR text, transcripts, key frames.'
+        type: array
+        items:
+          $ref: '#/$defs/variant'
+    additionalProperties: false
+  variant:
+    type: object
+    required:
+    - kind
+    - path
+    - sha256
+    - mime
+    - bytes
+    - generator
+    properties:
+      kind:
+        enum:
+        - preview
+        - thumbnail
+        - web
+        - ocr_text
+        - transcript
+        - keyframe
+      path:
+        description: 'Path in the object store: in the directory of the original, <name>.<first 12 hex
+          of the variant sha256>.<ext>, e.g. preview-400.41ab9c03d2e1.jpg. Checked by checkConsistency.'
+        type: string
+        pattern: ^files/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}/[a-z0-9_]+(?:-[a-z0-9_]+)*\.[0-9a-f]{12}\.[a-z0-9]+$
+      sha256:
+        $ref: '#/$defs/sha256'
+      mime:
+        type: string
+        pattern: ^[a-z]+/[a-z0-9.+-]+$
+      bytes:
+        type: integer
+        minimum: 0
+      width:
+        type: integer
+        minimum: 1
+      height:
+        type: integer
+        minimum: 1
+      at_seconds:
+        description: 'For key frames: position in the video.'
+        type: number
+        minimum: 0
+      generator:
+        description: What produced the variant. Use name 'human' for hand-made or hand-corrected variants.
+        type: object
+        required:
+        - name
+        properties:
+          name:
+            type: string
+            minLength: 1
+          version:
+            type: string
+        additionalProperties: false
+    additionalProperties: false
+  ulid:
+    type: string
+    pattern: ^[0-7][0-9A-HJKMNP-TV-Z]{25}$
+  sha256:
+    type: string
+    pattern: ^[0-9a-f]{64}$
+  date:
+    description: 'EDTF date: 1963, 1963-07, 1963-07-14, 196X, 1963?, 1963~, or an interval like 1960/1969.
+      Validated by form only.'
+    type: string
+    pattern: ^(?:\d{4}|\d{3}X|\d{2}XX)(?:-(?:\d{2}|XX)(?:-(?:\d{2}|XX))?)?[?~%]?(?:/(?:\d{4}|\d{3}X|\d{2}XX)(?:-(?:\d{2}|XX)(?:-(?:\d{2}|XX))?)?[?~%]?)?$
